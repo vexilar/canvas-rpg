@@ -66,19 +66,14 @@ export class CaveLevel1 extends Level {
     }
 
     const getFireballVector = (mousePos) => {
-      const halfX = canvas.scrollWidth/2;
-      const halfY = canvas.scrollHeight/2
+      const halfX = canvas.scrollWidth / 2;
+      const halfY = canvas.scrollHeight / 2;
       const diffX = mousePos.x - halfX;
       const diffY = mousePos.y - halfY;
-      const signX = Math.sign(diffX);
-      const signY = Math.sign(diffY);
-      const strengthX = Math.abs(diffX)/halfX;
-      const strengthY = Math.abs(diffY)/halfY;
-      const totalOfBoth = strengthX + strengthY;
-      const ratioX = strengthX/totalOfBoth;
-      const ratioY = strengthY/totalOfBoth;
+      const magnitude = Math.sqrt(diffX * diffX + diffY * diffY);
 
-      const vector = new Vector2(signX*ratioX, signY*ratioY);
+      // Normalize the vector to ensure consistent speed
+      const vector = new Vector2(diffX / magnitude, diffY / magnitude);
 
       return vector;
     }
@@ -176,9 +171,11 @@ export class CaveLevel1 extends Level {
     const pos = this.baddies[0].position.x;
     let dir = this.baddies[0].direction;
     
-    if (widMarg  < this.baddies[0].position.x){
+    // this block changes the direction of the baddy when it reaches the edge of the screen
+    const tolerance = 5; // Add a small margin of tolerance
+    if (this.baddies[0].direction === 1 && this.baddies[0].position.x >= widMarg - tolerance) {
       this.baddies[0].direction = -1;
-    }else if (widMarg  > this.baddies[0].position.x){
+    } else if (this.baddies[0].direction === -1 && this.baddies[0].position.x <= tolerance) {
       this.baddies[0].direction = 1;
     }
 
