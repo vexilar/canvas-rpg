@@ -100,13 +100,13 @@ export class Sprite extends GameObject {
         return; // No frame available yet
       }
       
-      console.log('Drawing animated sprite frame:', {
-        frameSize: this.frameSize,
-        scale: this.scale,
-        position: { x, y },
-        imageSize: { width: imageToDraw.width, height: imageToDraw.height },
-        currentFrame: this.resource.currentFrame || 0
-      });
+      // console.log('Drawing animated sprite frame:', {
+      //   frameSize: this.frameSize,
+      //   scale: this.scale,
+      //   position: { x, y },
+      //   imageSize: { width: imageToDraw.width, height: imageToDraw.height },
+      //   currentFrame: this.resource.currentFrame || 0
+      // });
       
       // For animated sprites, draw the entire frame directly without sprite sheet mapping
       ctx.drawImage(

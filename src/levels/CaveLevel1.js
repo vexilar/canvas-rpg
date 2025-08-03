@@ -18,6 +18,7 @@ import {
 import {Animations} from "../Animations.js";
 import {FrameIndexPattern} from "../FrameIndexPattern.js";
 import {ExplosionSprite} from "../ExplosionSprite.js";
+import {HealthBar} from "../HealthBar.js";
 
 const DEFAULT_HERO_POSITION = new Vector2(gridCells(6), gridCells(5))
 
@@ -132,6 +133,14 @@ export class CaveLevel1 extends Level {
       }
     })
     baddy.direction = 1;
+    baddy.health = 100; // Add health property
+    baddy.maxHealth = 100;
+
+    // Add health bar to baddy
+    const healthBar = new HealthBar(100);
+    baddy.addChild(healthBar);
+    console.log("Health bar created and attached to baddy. Children count:", baddy.children.length);
+    console.log("Health bar children:", baddy.children);
 
     this.addChild(baddy)
     this.baddies = []
@@ -188,27 +197,30 @@ export class CaveLevel1 extends Level {
 
   step(delta) {
     
-    const wid = canvas.width;
-    const widMarg = wid*.6;
-    const pos = this.baddies[0].position.x;
-    let dir = this.baddies[0].direction;
-    
-    // this block changes the direction of the baddy when it reaches the edge of the screen
-    const tolerance = 5; // Add a small margin of tolerance
-    if (this.baddies[0].direction === 1 && this.baddies[0].position.x >= widMarg - tolerance) {
-      this.baddies[0].direction = -1;
-    } else if (this.baddies[0].direction === -1 && this.baddies[0].position.x <= tolerance) {
-      this.baddies[0].direction = 1;
-    }
+    // Only process baddy movement if there are baddies
+    if (this.baddies.length > 0) {
+      const wid = canvas.width;
+      const widMarg = wid*.6;
+      const pos = this.baddies[0].position.x;
+      let dir = this.baddies[0].direction;
+      
+      // this block changes the direction of the baddy when it reaches the edge of the screen
+      const tolerance = 5; // Add a small margin of tolerance
+      if (this.baddies[0].direction === 1 && this.baddies[0].position.x >= widMarg - tolerance) {
+        this.baddies[0].direction = -1;
+      } else if (this.baddies[0].direction === -1 && this.baddies[0].position.x <= tolerance) {
+        this.baddies[0].direction = 1;
+      }
 
-    this.baddies[0].position.x = pos + dir;
+      this.baddies[0].position.x = pos + dir;
+    }
 
     // Check for fireball-baddy collisions
     this.fireballs.forEach(fireball => {
       this.baddies.forEach(baddy => {
         if (fireball.collidesWith(baddy)) {
           // Handle collision
-          console.log("Fireball hit baddy!");
+          //console.log("Fireball hit baddy!");
           
           // Create explosion at the collision point
           const explosionPosition = new Vector2(
@@ -222,9 +234,26 @@ export class CaveLevel1 extends Level {
           this.removeChild(fireball);
           this.fireballs.splice(this.fireballs.indexOf(fireball), 1);
           
-          // You could also damage or remove the baddy here
-          // this.removeChild(baddy);
-          // this.baddies.splice(this.baddies.indexOf(baddy), 1);
+          // Damage the baddy
+          baddy.health -= 25; // 25 damage per hit
+          console.log("Baddy health:", baddy.health); // Debug health
+          
+          if (baddy.health <= 0) {
+            baddy.health = 0;
+            // Remove the baddy when health reaches zero
+            this.removeChild(baddy);
+            this.baddies.splice(this.baddies.indexOf(baddy), 1);
+            console.log("Baddy destroyed!");
+          }
+          
+          // Update the health bar
+          const healthBar = baddy.children.find(child => child instanceof HealthBar);
+          if (healthBar) {
+            healthBar.setHealth(baddy.health);
+            console.log("Health bar updated to:", baddy.health);
+          } else {
+            console.warn("Health bar not found on baddy");
+          }
         }
       });
     });
