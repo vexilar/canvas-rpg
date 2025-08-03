@@ -98,8 +98,8 @@ export class CaveLevel1 extends Level {
           hitbox: {
             x: 0,
             y: 0,
-            width: 20, // Smaller hitbox than visual
-            height: 20
+            width: 12, // Reduced from 20 for tighter collision
+            height: 12
           }
         })
         fireball.creationTime = new Date();
@@ -128,8 +128,8 @@ export class CaveLevel1 extends Level {
       hitbox: {
         x: 8, // Offset from sprite center
         y: 8,
-        width: 32, // Smaller hitbox than visual
-        height: 32
+        width: 16, // Reduced from 32 for tighter collision
+        height: 16
       }
     })
     baddy.direction = 1;
@@ -271,10 +271,19 @@ export class CaveLevel1 extends Level {
           // Handle collision
           //console.log("Fireball hit baddy!");
           
-          // Create explosion at the collision point
+          // Create explosion at a blend between fireball collision point and baddy center
+          const fireballCenterX = fireball.position.x + fireball.hitbox.width / 2;
+          const fireballCenterY = fireball.position.y + fireball.hitbox.height / 2;
+          const baddyCenterX = baddy.position.x + baddy.frameSize.x / 2;
+          const baddyCenterY = baddy.position.y + baddy.frameSize.y / 2;
+          
+          // Blend the positions (60% towards baddy center, 40% from fireball position)
+          const explosionX = fireballCenterX * 0.4 + baddyCenterX * 0.6;
+          const explosionY = fireballCenterY * 0.4 + baddyCenterY * 0.6;
+          
           const explosionPosition = new Vector2(
-            fireball.position.x + fireball.hitbox.width / 2 - 32, // Center the explosion
-            fireball.position.y + fireball.hitbox.height / 2 - 32
+            explosionX - 16, // Center the explosion
+            explosionY - 16
           );
           const explosion = new ExplosionSprite(explosionPosition);
           this.addChild(explosion);
