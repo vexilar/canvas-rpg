@@ -135,16 +135,25 @@ export class CaveLevel1 extends Level {
     baddy.direction = 1;
     baddy.health = 100; // Add health property
     baddy.maxHealth = 100;
+    
+    // Add AI tracking properties
+    baddy.aggroRange = 120; // Distance to start tracking hero
+    baddy.isAggroed = false;
+    baddy.targetPosition = baddy.position.duplicate(); // Current movement target
+    baddy.moveSpeed = 0.5; // Speed when tracking hero
 
     // Add health bar to baddy
     const healthBar = new HealthBar(100);
     baddy.addChild(healthBar);
-    console.log("Health bar created and attached to baddy. Children count:", baddy.children.length);
-    console.log("Health bar children:", baddy.children);
+    //console.log("Health bar created and attached to baddy. Children count:", baddy.children.length);
+    //console.log("Health bar children:", baddy.children);
 
     this.addChild(baddy)
     this.baddies = []
     this.baddies.push(baddy)
+    
+    // Store hero reference for AI tracking
+    this.hero = hero;
 
     // Example of how to use a GIF sprite:
     // const animatedSprite = new Sprite({
@@ -199,20 +208,60 @@ export class CaveLevel1 extends Level {
     
     // Only process baddy movement if there are baddies
     if (this.baddies.length > 0) {
-      const wid = canvas.width;
-      const widMarg = wid*.6;
-      const pos = this.baddies[0].position.x;
-      let dir = this.baddies[0].direction;
-      
-      // this block changes the direction of the baddy when it reaches the edge of the screen
-      const tolerance = 5; // Add a small margin of tolerance
-      if (this.baddies[0].direction === 1 && this.baddies[0].position.x >= widMarg - tolerance) {
-        this.baddies[0].direction = -1;
-      } else if (this.baddies[0].direction === -1 && this.baddies[0].position.x <= tolerance) {
-        this.baddies[0].direction = 1;
-      }
-
-      this.baddies[0].position.x = pos + dir;
+      this.baddies.forEach(baddy => {
+        // Calculate distance to hero (using hero's visual center)
+        const heroCenterX = this.hero.position.x + this.hero.body.position.x + this.hero.body.frameSize.x / 2;
+        const heroCenterY = this.hero.position.y + this.hero.body.position.y + this.hero.body.frameSize.y / 2;
+        
+        // Calculate baddy's visual center
+        const baddyCenterX = baddy.position.x + baddy.frameSize.x / 2;
+        const baddyCenterY = baddy.position.y + baddy.frameSize.y / 2;
+        
+        const distanceToHero = Math.sqrt(
+          Math.pow(baddyCenterX - heroCenterX, 2) + 
+          Math.pow(baddyCenterY - heroCenterY, 2)
+        );
+        
+        // Check if hero is in aggro range
+        if (distanceToHero <= baddy.aggroRange) {
+          baddy.isAggroed = true;
+          //console.log("Baddy aggroed! Distance:", distanceToHero);
+        } else {
+          baddy.isAggroed = false;
+        }
+        
+        if (baddy.isAggroed) {
+          // Move towards hero center
+          const dx = heroCenterX - baddyCenterX;
+          const dy = heroCenterY - baddyCenterY;
+          
+          // Normalize movement vector
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          if (distance > 0) {
+            const moveX = (dx / distance) * baddy.moveSpeed;
+            const moveY = (dy / distance) * baddy.moveSpeed;
+            
+            baddy.position.x += moveX;
+            baddy.position.y += moveY;
+          }
+        } else {
+          // Original patrol behavior
+          const wid = canvas.width;
+          const widMarg = wid * 0.6;
+          const pos = baddy.position.x;
+          let dir = baddy.direction;
+          
+          // Change direction when reaching screen edges
+          const tolerance = 5;
+          if (baddy.direction === 1 && baddy.position.x >= widMarg - tolerance) {
+            baddy.direction = -1;
+          } else if (baddy.direction === -1 && baddy.position.x <= tolerance) {
+            baddy.direction = 1;
+          }
+          
+          baddy.position.x = pos + dir;
+        }
+      });
     }
 
     // Check for fireball-baddy collisions
@@ -256,6 +305,41 @@ export class CaveLevel1 extends Level {
           }
         }
       });
+    });
+
+    // Check for baddy-hero collisions
+    this.baddies.forEach(baddy => {
+      // Log hitbox bounds for debugging
+      const baddyBounds = baddy.getHitboxBounds();
+      const heroBounds = this.hero.body.getHitboxBounds();
+      
+      //console.log("Baddy bounds:", baddyBounds);
+      //console.log("Hero bounds:", heroBounds);
+      
+      // Calculate hero's visual center
+      const heroCenterX = this.hero.position.x + this.hero.body.position.x + this.hero.body.frameSize.x / 2;
+      const heroCenterY = this.hero.position.y + this.hero.body.position.y + this.hero.body.frameSize.y / 2;
+      
+      // Calculate baddy's visual center
+      const baddyCenterX = baddy.position.x + baddy.frameSize.x / 2;
+      const baddyCenterY = baddy.position.y + baddy.frameSize.y / 2;
+      
+      // Calculate distance between baddy and hero's visual centers
+      const distance = Math.sqrt(
+        Math.pow(baddyCenterX - heroCenterX, 2) + 
+        Math.pow(baddyCenterY - heroCenterY, 2)
+      );
+      //console.log("Distance between baddy and hero:", distance);
+      
+      // Check collision using distance-based detection instead of hitbox
+      const collisionDistance = 12; // Collision radius (reduced from 20)
+      if (distance <= collisionDistance) {
+        // Baddy hit the hero
+        //console.log("Baddy collided with hero! Baddy center:", {x: baddyCenterX, y: baddyCenterY}, "Hero center:", {x: heroCenterX, y: heroCenterY});
+        this.hero.takeDamage(10, new Vector2(baddyCenterX, baddyCenterY)); // 10 damage per hit with knockback
+      } else {
+        //console.log("No collision detected");
+      }
     });
   }
 

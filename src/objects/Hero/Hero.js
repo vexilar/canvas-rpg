@@ -6,6 +6,7 @@ import {Sprite} from "../../Sprite.js";
 import {resources} from "../../Resource.js";
 import {Animations} from "../../Animations.js";
 import {FrameIndexPattern} from "../../FrameIndexPattern.js";
+import {HealthBar} from "../../HealthBar.js";
 import {
   PICK_UP_DOWN,
   STAND_DOWN,
@@ -40,6 +41,12 @@ export class Hero extends GameObject {
       vFrames: 8,
       frame: 1,
       position: new Vector2(-8, -20),
+      hitbox: {
+        x: 8, // Offset from sprite center
+        y: 8,
+        width: 16, // Smaller hitbox than visual
+        height: 16
+      },
       animations: new Animations({
         walkDown: new FrameIndexPattern(WALK_DOWN),
         walkUp: new FrameIndexPattern(WALK_UP),
@@ -53,6 +60,17 @@ export class Hero extends GameObject {
       })
     })
     this.addChild(this.body);
+
+    // Add health bar to hero
+    this.health = 100;
+    this.maxHealth = 100;
+    this.isInvulnerable = false; // For damage cooldown
+    this.invulnerabilityTime = 0; // Time remaining invulnerable
+    this.isKnockbacked = false; // For knockback state
+    this.knockbackTime = 0; // Time remaining in knockback
+    this.knockbackVector = new Vector2(0, 0); // Knockback direction and speed
+    const healthBar = new HealthBar(100, 10, -20);
+    this.addChild(healthBar);
 
     this.facingDirection = DOWN;
     this.destinationPosition = this.position.duplicate();
@@ -79,6 +97,40 @@ export class Hero extends GameObject {
 
     // Don't do anything when locked
     if (this.isLocked) {
+      return;
+    }
+
+    // Handle invulnerability cooldown
+    if (this.isInvulnerable) {
+      this.invulnerabilityTime -= delta;
+      if (this.invulnerabilityTime <= 0) {
+        this.isInvulnerable = false;
+      }
+    }
+
+    // Handle knockback movement
+    if (this.isKnockbacked) {
+      this.knockbackTime -= delta;
+      
+      // Apply knockback movement
+      this.position.x += this.knockbackVector.x;
+      this.position.y += this.knockbackVector.y;
+      
+      // Reduce knockback speed over time (friction)
+      this.knockbackVector.x *= 0.9;
+      this.knockbackVector.y *= 0.9;
+      
+      if (this.knockbackTime <= 0) {
+        this.isKnockbacked = false;
+        this.knockbackVector = new Vector2(0, 0);
+        // Update destination position to current position to prevent snapback
+        this.destinationPosition.x = this.position.x;
+        this.destinationPosition.y = this.position.y;
+        // Emit final position after knockback ends
+        this.tryEmitPosition();
+      }
+      
+      // Don't process normal movement during knockback
       return;
     }
 
@@ -115,6 +167,12 @@ export class Hero extends GameObject {
     if (this.lastX === this.position.x && this.lastY === this.position.y) {
       return;
     }
+    
+    // Don't emit position during knockback to prevent camera snapback
+    if (this.isKnockbacked) {
+      return;
+    }
+    
     this.lastX = this.position.x;
     this.lastY = this.position.y;
     events.emit("HERO_POSITION", this.position)
@@ -190,6 +248,49 @@ export class Hero extends GameObject {
       this.itemPickupShell.destroy();
     }
 
+  }
+
+  takeDamage(amount, attackerPosition = null) {
+    if (this.isInvulnerable) {
+      return; // Can't take damage while invulnerable
+    }
+    
+    this.health = Math.max(0, this.health - amount);
+    console.log("Hero took damage! Health:", this.health);
+    
+    // Update health bar
+    const healthBar = this.children.find(child => child instanceof HealthBar);
+    if (healthBar) {
+      healthBar.setHealth(this.health);
+    }
+    
+    // Calculate knockback direction if attacker position is provided
+    if (attackerPosition) {
+      // Calculate direction from attacker to hero
+      const dx = this.position.x - attackerPosition.x;
+      const dy = this.position.y - attackerPosition.y;
+      
+      // Normalize the direction vector
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance > 0) {
+        const knockbackSpeed = 3; // Knockback speed
+        this.knockbackVector.x = (dx / distance) * knockbackSpeed;
+        this.knockbackVector.y = (dy / distance) * knockbackSpeed;
+        
+        // Set knockback duration
+        this.isKnockbacked = true;
+        this.knockbackTime = 300; // 300ms knockback duration
+      }
+    }
+    
+    // Set invulnerability for 1 second (1000ms)
+    this.isInvulnerable = true;
+    this.invulnerabilityTime = 1000;
+    
+    if (this.health <= 0) {
+      console.log("Hero defeated!");
+      // You could add game over logic here
+    }
   }
 
 

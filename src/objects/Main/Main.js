@@ -12,6 +12,7 @@ export class Main extends GameObject {
     this.level = null;
     this.input = new Input()
     this.camera = new Camera()
+    this.addChild(this.camera); // Add camera so its step method gets called
   }
 
   ready() {
