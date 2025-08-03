@@ -289,7 +289,7 @@ export class Hero extends GameObject {
     
     if (this.health <= 0) {
       console.log("Hero defeated!");
-      // You could add game over logic here
+      events.emit("HERO_DIED");
     }
   }
 
