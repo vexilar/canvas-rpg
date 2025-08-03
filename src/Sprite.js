@@ -11,6 +11,7 @@ export class Sprite extends GameObject {
       scale, // how large to draw this image
       position, // where to draw it (top left corner)
       animations,
+      hitbox, // new: custom hitbox {x, y, width, height} relative to sprite
     }) {
     super({
       name
@@ -24,6 +25,15 @@ export class Sprite extends GameObject {
     this.scale = scale ?? 1;
     this.position = position ?? new Vector2(0,0);
     this.animations = animations ?? null;
+    
+    // Hitbox defaults to the sprite bounds if not specified
+    this.hitbox = hitbox ?? {
+      x: 0,
+      y: 0,
+      width: this.frameSize.x * this.scale,
+      height: this.frameSize.y * this.scale
+    };
+    
     this.buildFrameMap();
   }
 
@@ -48,11 +58,68 @@ export class Sprite extends GameObject {
     this.frame = this.animations.frame;
   }
 
+  // Add method to get world-space hitbox bounds
+  getHitboxBounds() {
+    const worldX = this.position.x + this.hitbox.x;
+    const worldY = this.position.y + this.hitbox.y;
+    return {
+      x: worldX,
+      y: worldY,
+      width: this.hitbox.width,
+      height: this.hitbox.height
+    };
+  }
+
+  // Add collision detection method
+  collidesWith(otherSprite) {
+    const thisBounds = this.getHitboxBounds();
+    const otherBounds = otherSprite.getHitboxBounds();
+    
+    return !(thisBounds.x + thisBounds.width < otherBounds.x ||
+             otherBounds.x + otherBounds.width < thisBounds.x ||
+             thisBounds.y + thisBounds.height < otherBounds.y ||
+             otherBounds.y + otherBounds.height < thisBounds.y);
+  }
+
   drawImage(ctx, x, y) {
     if (!this.resource.isLoaded) {
       return;
     }
 
+    // Get the current image to draw
+    let imageToDraw = this.resource.image;
+    
+    // Check if this is an animated sprite resource
+    const isAnimated = this.resource.isAnimated === true;
+    
+    if (isAnimated) {
+      // For animated sprites, get the current frame
+      imageToDraw = this.resource.frames[this.resource.currentFrame || 0]?.image;
+      if (!imageToDraw) {
+        console.warn('No animated sprite frame available');
+        return; // No frame available yet
+      }
+      
+      console.log('Drawing animated sprite frame:', {
+        frameSize: this.frameSize,
+        scale: this.scale,
+        position: { x, y },
+        imageSize: { width: imageToDraw.width, height: imageToDraw.height },
+        currentFrame: this.resource.currentFrame || 0
+      });
+      
+      // For animated sprites, draw the entire frame directly without sprite sheet mapping
+      ctx.drawImage(
+          imageToDraw,
+          x, //Where to place this on canvas tag X (0)
+          y, //Where to place this on canvas tag Y (0)
+          this.frameSize.x * this.scale, //How large to scale it (X)
+          this.frameSize.y * this.scale, //How large to scale it (Y)
+      );
+      return;
+    }
+
+    // For regular sprite sheets, use frame mapping
     // Find the correct sprite sheet frame to use
     let frameCoordX = 0;
     let frameCoordY = 0;
@@ -66,7 +133,7 @@ export class Sprite extends GameObject {
     const frameSizeY = this.frameSize.y;
 
     ctx.drawImage(
-        this.resource.image,
+        imageToDraw,
         frameCoordX,
         frameCoordY, // Top Y corner of frame
         frameSizeX, //How much to crop from the sprite sheet (X)

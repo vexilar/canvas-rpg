@@ -17,6 +17,7 @@ import {
 } from "../baddyAnims.js";
 import {Animations} from "../Animations.js";
 import {FrameIndexPattern} from "../FrameIndexPattern.js";
+import {ExplosionSprite} from "../ExplosionSprite.js";
 
 const DEFAULT_HERO_POSITION = new Vector2(gridCells(6), gridCells(5))
 
@@ -93,6 +94,12 @@ export class CaveLevel1 extends Level {
           scale: .1,
           position: hero.position.duplicate(),
           drawLayer: 0, // this doesnt seem to do much, TODO: figure out how to make it work the way i want it
+          hitbox: {
+            x: 0,
+            y: 0,
+            width: 20, // Smaller hitbox than visual
+            height: 20
+          }
         })
         fireball.creationTime = new Date();
         fireball.vector = getFireballVector(mousePos);
@@ -116,13 +123,28 @@ export class CaveLevel1 extends Level {
       animations: new Animations({
         walkRight: new FrameIndexPattern(WALK_RIGHT),
         standRight: new FrameIndexPattern(STAND_RIGHT),
-      })
+      }),
+      hitbox: {
+        x: 8, // Offset from sprite center
+        y: 8,
+        width: 32, // Smaller hitbox than visual
+        height: 32
+      }
     })
     baddy.direction = 1;
 
     this.addChild(baddy)
     this.baddies = []
     this.baddies.push(baddy)
+
+    // Example of how to use a GIF sprite:
+    // const animatedSprite = new Sprite({
+    //   resource: resources.gifs.animatedFireball, // Use gifs instead of images
+    //   frameSize: new Vector2(64, 64),
+    //   position: new Vector2(100, 100),
+    //   scale: 1
+    // });
+    // this.addChild(animatedSprite);
 
     const rod = new Rod(gridCells(9), gridCells(6))
     this.addChild(rod)
@@ -179,9 +201,33 @@ export class CaveLevel1 extends Level {
       this.baddies[0].direction = 1;
     }
 
-    console.log({pos, dir, widMarg})
-
     this.baddies[0].position.x = pos + dir;
+
+    // Check for fireball-baddy collisions
+    this.fireballs.forEach(fireball => {
+      this.baddies.forEach(baddy => {
+        if (fireball.collidesWith(baddy)) {
+          // Handle collision
+          console.log("Fireball hit baddy!");
+          
+          // Create explosion at the collision point
+          const explosionPosition = new Vector2(
+            fireball.position.x + fireball.hitbox.width / 2 - 32, // Center the explosion
+            fireball.position.y + fireball.hitbox.height / 2 - 32
+          );
+          const explosion = new ExplosionSprite(explosionPosition);
+          this.addChild(explosion);
+          
+          // Remove the fireball
+          this.removeChild(fireball);
+          this.fireballs.splice(this.fireballs.indexOf(fireball), 1);
+          
+          // You could also damage or remove the baddy here
+          // this.removeChild(baddy);
+          // this.baddies.splice(this.baddies.indexOf(baddy), 1);
+        }
+      });
+    });
   }
 
   ready() {

@@ -4,6 +4,7 @@ import {GameLoop} from "./src/GameLoop.js";
 import {Main} from "./src/objects/Main/Main.js";
 import {CaveLevel1} from "./src/levels/CaveLevel1.js";
 import {canvas} from "./src/Canvas.js"
+import {resources} from "./src/Resource.js"
 
 // Grabbing the canvas to draw to
 
@@ -20,6 +21,7 @@ mainScene.setLevel(new CaveLevel1())
 const update = (delta) => {
   mainScene.stepEntry(delta, mainScene);
   mainScene.input?.update();
+  resources.step(delta); // Update GIF animations
 };
 
 const draw = () => {
