@@ -20,12 +20,16 @@ import {
 } from "./heroAnimations.js";
 import {moveTowards} from "../../helpers/moveTowards.js";
 import {events} from "../../Events.js";
+import {audio} from "../../Audio.js";
 
 export class Hero extends GameObject {
-  constructor(x, y) {
+  constructor(x, y, options = {}) {
     super({
       position: new Vector2(x, y)
     });
+
+    // Turn order attribute
+    this.speed = 100;
 
     const shadow = new Sprite({
       resource: resources.images.shadow,
@@ -69,14 +73,22 @@ export class Hero extends GameObject {
     this.isKnockbacked = false; // For knockback state
     this.knockbackTime = 0; // Time remaining in knockback
     this.knockbackVector = new Vector2(0, 0); // Knockback direction and speed
+    this.preKnockbackPosition = null;
+    this.returnToAfterKnockback = null;
+    this.isReturningFromKnockback = false;
+    this.knockbackReturnSpeed = 0.2; // px/ms
     const healthBar = new HealthBar(100, 10, -20);
     this.addChild(healthBar);
+    this.healthBar = healthBar;
 
     this.facingDirection = DOWN;
     this.destinationPosition = this.position.duplicate();
     this.itemPickupTime = 0;
     this.itemPickupShell = null;
     this.isLocked = false;
+
+    // Battle skills loadout (optional)
+    this.skills = options.skills ?? null;
 
     // React to picking up an item
     events.on("HERO_PICKS_UP_ITEM", this, data => {
@@ -95,12 +107,7 @@ export class Hero extends GameObject {
 
   step(delta, root) {
 
-    // Don't do anything when locked
-    if (this.isLocked) {
-      return;
-    }
-
-    // Handle invulnerability cooldown
+    // Handle invulnerability cooldown even when locked
     if (this.isInvulnerable) {
       this.invulnerabilityTime -= delta;
       if (this.invulnerabilityTime <= 0) {
@@ -108,7 +115,7 @@ export class Hero extends GameObject {
       }
     }
 
-    // Handle knockback movement
+    // Handle knockback movement even when locked
     if (this.isKnockbacked) {
       this.knockbackTime -= delta;
       
@@ -123,6 +130,10 @@ export class Hero extends GameObject {
       if (this.knockbackTime <= 0) {
         this.isKnockbacked = false;
         this.knockbackVector = new Vector2(0, 0);
+        // Begin return-to-position phase if a target was requested
+        if (this.returnToAfterKnockback) {
+          this.isReturningFromKnockback = true;
+        }
         // Update destination position to current position to prevent snapback
         this.destinationPosition.x = this.position.x;
         this.destinationPosition.y = this.position.y;
@@ -131,6 +142,32 @@ export class Hero extends GameObject {
       }
       
       // Don't process normal movement during knockback
+      return;
+    }
+
+    // Smoothly return to target position after knockback, even when locked
+    if (this.isReturningFromKnockback && this.returnToAfterKnockback) {
+      const dx = this.returnToAfterKnockback.x - this.position.x;
+      const dy = this.returnToAfterKnockback.y - this.position.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist <= 1) {
+        this.position.x = this.returnToAfterKnockback.x;
+        this.position.y = this.returnToAfterKnockback.y;
+        this.isReturningFromKnockback = false;
+        this.tryEmitPosition();
+      } else {
+        const stepX = (dx / dist) * this.knockbackReturnSpeed * delta;
+        const stepY = (dy / dist) * this.knockbackReturnSpeed * delta;
+        this.position.x += stepX;
+        this.position.y += stepY;
+        this.tryEmitPosition();
+      }
+      // During return, skip normal movement
+      return;
+    }
+
+    // Don't do movement/input when locked
+    if (this.isLocked) {
       return;
     }
 
@@ -250,18 +287,24 @@ export class Hero extends GameObject {
 
   }
 
-  takeDamage(amount, attackerPosition = null) {
+  takeDamage(amount, attackerPosition = null, returnToPosition = null) {
     if (this.isInvulnerable) {
       return; // Can't take damage while invulnerable
     }
     
+    // Play hit/slash sound
+    audio.playSlash(0.45);
+    audio.playClip("heroHit", { volume: 0.7, delaySec: 0.0 });
+
     this.health = Math.max(0, this.health - amount);
     console.log("Hero took damage! Health:", this.health);
     
     // Update health bar
-    const healthBar = this.children.find(child => child instanceof HealthBar);
-    if (healthBar) {
-      healthBar.setHealth(this.health);
+    if (this.healthBar) {
+      this.healthBar.setHealth(this.health);
+    } else {
+      const hb = this.children.find(child => child instanceof HealthBar);
+      hb?.setHealth(this.health);
     }
     
     // Calculate knockback direction if attacker position is provided
@@ -274,6 +317,10 @@ export class Hero extends GameObject {
       const distance = Math.sqrt(dx * dx + dy * dy);
       if (distance > 0) {
         const knockbackSpeed = 3; // Knockback speed
+        // Remember where we were and where to return after knockback
+        this.preKnockbackPosition = new Vector2(this.position.x, this.position.y);
+        this.returnToAfterKnockback = returnToPosition || this.preKnockbackPosition;
+        this.isReturningFromKnockback = false;
         this.knockbackVector.x = (dx / distance) * knockbackSpeed;
         this.knockbackVector.y = (dy / distance) * knockbackSpeed;
         

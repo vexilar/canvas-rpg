@@ -80,7 +80,7 @@ export class DeathScreen extends GameObject {
       ctx.font = "48px Arial";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("Shitter down", ctx.canvas.width / 2, ctx.canvas.height / 2);
+      ctx.fillText("Ha ha", ctx.canvas.width / 2, ctx.canvas.height / 2);
       ctx.restore();
     }
   }

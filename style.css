@@ -6,7 +6,12 @@ html, body {
 }
 
 canvas {
-  width: 100%;
+  width: 100vw;             /* Fill screen width */
+  height: auto;             /* Let height follow width */
+  aspect-ratio: 16 / 9;     /* Maintain 320x180 aspect */
+  display: block;           /* Remove inline gap */
+  image-rendering: pixelated;   /* Nearest-neighbor when browser scales */
+  image-rendering: crisp-edges;
   background: blue;
 }
 

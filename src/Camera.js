@@ -1,6 +1,7 @@
 import {GameObject} from "./GameObject.js";
 import {events} from "./Events.js";
 import {Vector2} from "./Vector2.js";
+import {DESIGN_WIDTH, DESIGN_HEIGHT} from "./helpers/grid.js";
 
 export class Camera extends GameObject {
   constructor() {
@@ -8,12 +9,16 @@ export class Camera extends GameObject {
 
     this.targetPosition = new Vector2(0, 0);
     this.smoothSpeed = 0.05; // Reduced from 0.1 for less sensitive movement
+    this.followEnabled = true; // Allow disabling follow during battle scenes
 
     events.on("HERO_POSITION", this, heroPosition => {
+      if (!this.followEnabled) {
+        return; // Ignore hero movement while follow is disabled
+      }
       // Calculate camera position that centers the hero
       const personHalf = 8;
-      const canvasWidth = 320;
-      const canvasHeight = 180;
+      const canvasWidth = DESIGN_WIDTH;
+      const canvasHeight = DESIGN_HEIGHT;
       const halfWidth = -personHalf + canvasWidth / 2;
       const halfHeight = -personHalf + canvasHeight / 2;
       
@@ -21,6 +26,11 @@ export class Camera extends GameObject {
         -heroPosition.x + halfWidth,
         -heroPosition.y + halfHeight
       );
+    })
+
+    // Allow external control to enable/disable following
+    events.on("CAMERA_FOLLOW_ENABLED", this, (enabled) => {
+      this.followEnabled = !!enabled;
     })
 
     // Camera knows when a new level starts
@@ -46,10 +56,16 @@ export class Camera extends GameObject {
   }
 
   centerPositionOnTarget(pos) {
+    // Guard against undefined position
+    if (!pos || typeof pos.x === 'undefined' || typeof pos.y === 'undefined') {
+      console.warn('Camera.centerPositionOnTarget called with invalid position:', pos);
+      return;
+    }
+    
     // Create a new position based on the incoming position
     const personHalf = 8;
-    const canvasWidth = 320;
-    const canvasHeight = 180;
+    const canvasWidth = DESIGN_WIDTH;
+    const canvasHeight = DESIGN_HEIGHT;
     const halfWidth = -personHalf + canvasWidth / 2;
     const halfHeight = -personHalf + canvasHeight / 2;
     

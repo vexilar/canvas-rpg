@@ -43,3 +43,5 @@ const makeWalkingFrames = (rootFrame=0) => {
 
 export const STAND_RIGHT = makeStandingFrames(1);
 export const WALK_RIGHT = makeWalkingFrames(1);
+export const STAND_LEFT = makeStandingFrames(1);
+export const WALK_LEFT = makeWalkingFrames(1);

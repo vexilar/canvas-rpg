@@ -2,13 +2,14 @@ import {Sprite} from "../Sprite.js";
 import {Vector2} from "../Vector2.js";
 import {resources} from "../Resource.js";
 import {Level} from "../objects/Level/Level.js";
-import {gridCells} from "../helpers/grid.js";
+import {gridCells, DESIGN_WIDTH, DESIGN_HEIGHT} from "../helpers/grid.js";
 import {Exit } from "../objects/Exit/Exit.js";
 import {Hero} from "../objects/Hero/Hero.js";
 import {Rod} from "../objects/Rod/Rod.js";
 import {events} from "../Events.js";
 import {OutdoorLevel1} from "./OutdoorLevel1.js";
 import {Npc} from "../objects/Npc/Npc.js";
+import {Baddy} from "../objects/Baddy/Baddy.js";
 import {TALKED_TO_A, TALKED_TO_B} from "../StoryFlags.js";
 import {canvas} from "../Canvas.js"
 import {
@@ -28,12 +29,12 @@ export class CaveLevel1 extends Level {
 
     this.background = new Sprite({
       resource: resources.images.cave,
-      frameSize: new Vector2(320, 180)
+      frameSize: new Vector2(DESIGN_WIDTH, DESIGN_HEIGHT)
     })
 
     const ground = new Sprite({
       resource: resources.images.caveGround,
-      frameSize: new Vector2(320, 180)
+      frameSize: new Vector2(DESIGN_WIDTH, DESIGN_HEIGHT)
     })
     this.addChild(ground)
 
@@ -114,39 +115,13 @@ export class CaveLevel1 extends Level {
         this.fireballs.push(fireball)
     });
 
-    const baddy = new Sprite({
-      resource: resources.images.baddy,
-      frameSize: new Vector2(48,48),
-      hFrames: 6,
-      vFrames: 1,
-      frame: 1,
-      position: new Vector2(20, 20),
-      animations: new Animations({
-        walkRight: new FrameIndexPattern(WALK_RIGHT),
-        standRight: new FrameIndexPattern(STAND_RIGHT),
-      }),
-      hitbox: {
-        x: 8, // Offset from sprite center
-        y: 8,
-        width: 16, // Reduced from 32 for tighter collision
-        height: 16
-      }
-    })
-    baddy.direction = 1;
-    baddy.health = 100; // Add health property
-    baddy.maxHealth = 100;
-    
-    // Add AI tracking properties
-    baddy.aggroRange = 120; // Distance to start tracking hero
-    baddy.isAggroed = false;
-    baddy.targetPosition = baddy.position.duplicate(); // Current movement target
-    baddy.moveSpeed = 0.5; // Speed when tracking hero
-
-    // Add health bar to baddy
-    const healthBar = new HealthBar(100);
-    baddy.addChild(healthBar);
-    //console.log("Health bar created and attached to baddy. Children count:", baddy.children.length);
-    //console.log("Health bar children:", baddy.children);
+    const baddy = new Baddy(20, 20, {
+      battleMode: false,
+      health: 100,
+      maxHealth: 100,
+      aggroRange: 0, // Disable chasing - player must run into baddy
+      moveSpeed: 0
+    });
 
     this.addChild(baddy)
     this.baddies = []
@@ -201,73 +176,30 @@ export class CaveLevel1 extends Level {
     })
     this.addChild(npc2);
 
+    // Note: Battle is now triggered by colliding with the baddy above
+
     this.walls = new Set();
   }
 
   step(delta) {
     
-    // Only process baddy movement if there are baddies
+    // Update baddy AI
     if (this.baddies.length > 0) {
       this.baddies.forEach(baddy => {
-        // Calculate distance to hero (using hero's visual center)
+        // Calculate hero center for AI tracking
         const heroCenterX = this.hero.position.x + this.hero.body.position.x + this.hero.body.frameSize.x / 2;
         const heroCenterY = this.hero.position.y + this.hero.body.position.y + this.hero.body.frameSize.y / 2;
+        const heroPosition = new Vector2(heroCenterX, heroCenterY);
         
-        // Calculate baddy's visual center
-        const baddyCenterX = baddy.position.x + baddy.frameSize.x / 2;
-        const baddyCenterY = baddy.position.y + baddy.frameSize.y / 2;
-        
-        const distanceToHero = Math.sqrt(
-          Math.pow(baddyCenterX - heroCenterX, 2) + 
-          Math.pow(baddyCenterY - heroCenterY, 2)
-        );
-        
-        // Check if hero is in aggro range
-        if (distanceToHero <= baddy.aggroRange) {
-          baddy.isAggroed = true;
-          //console.log("Baddy aggroed! Distance:", distanceToHero);
-        } else {
-          baddy.isAggroed = false;
-        }
-        
-        if (baddy.isAggroed) {
-          // Move towards hero center
-          const dx = heroCenterX - baddyCenterX;
-          const dy = heroCenterY - baddyCenterY;
-          
-          // Normalize movement vector
-          const distance = Math.sqrt(dx * dx + dy * dy);
-          if (distance > 0) {
-            const moveX = (dx / distance) * baddy.moveSpeed;
-            const moveY = (dy / distance) * baddy.moveSpeed;
-            
-            baddy.position.x += moveX;
-            baddy.position.y += moveY;
-          }
-        } else {
-          // Original patrol behavior
-          const wid = canvas.width;
-          const widMarg = wid * 0.6;
-          const pos = baddy.position.x;
-          let dir = baddy.direction;
-          
-          // Change direction when reaching screen edges
-          const tolerance = 5;
-          if (baddy.direction === 1 && baddy.position.x >= widMarg - tolerance) {
-            baddy.direction = -1;
-          } else if (baddy.direction === -1 && baddy.position.x <= tolerance) {
-            baddy.direction = 1;
-          }
-          
-          baddy.position.x = pos + dir;
-        }
+        // Use the Baddy object's AI method
+        baddy.updateAI(heroPosition, delta);
       });
     }
 
     // Check for fireball-baddy collisions
     this.fireballs.forEach(fireball => {
       this.baddies.forEach(baddy => {
-        if (fireball.collidesWith(baddy)) {
+        if (fireball.collidesWith(baddy.sprite)) {
           // Handle collision
           //console.log("Fireball hit baddy!");
           
@@ -292,25 +224,15 @@ export class CaveLevel1 extends Level {
           this.removeChild(fireball);
           this.fireballs.splice(this.fireballs.indexOf(fireball), 1);
           
-          // Damage the baddy
-          baddy.health -= 25; // 25 damage per hit
-          console.log("Baddy health:", baddy.health); // Debug health
+          // Damage the baddy using the new Baddy object's method
+          baddy.takeDamage(25); // 25 damage per hit
+          console.log("Baddy health:", baddy.health);
           
-          if (baddy.health <= 0) {
-            baddy.health = 0;
+          if (!baddy.isAlive) {
             // Remove the baddy when health reaches zero
             this.removeChild(baddy);
             this.baddies.splice(this.baddies.indexOf(baddy), 1);
             console.log("Baddy destroyed!");
-          }
-          
-          // Update the health bar
-          const healthBar = baddy.children.find(child => child instanceof HealthBar);
-          if (healthBar) {
-            healthBar.setHealth(baddy.health);
-            console.log("Health bar updated to:", baddy.health);
-          } else {
-            console.warn("Health bar not found on baddy");
           }
         }
       });
@@ -330,8 +252,8 @@ export class CaveLevel1 extends Level {
       const heroCenterY = this.hero.position.y + this.hero.body.position.y + this.hero.body.frameSize.y / 2;
       
       // Calculate baddy's visual center
-      const baddyCenterX = baddy.position.x + baddy.frameSize.x / 2;
-      const baddyCenterY = baddy.position.y + baddy.frameSize.y / 2;
+      const baddyCenterX = baddy.position.x + baddy.sprite.frameSize.x / 2;
+      const baddyCenterY = baddy.position.y + baddy.sprite.frameSize.y / 2;
       
       // Calculate distance between baddy and hero's visual centers
       const distance = Math.sqrt(
@@ -343,12 +265,26 @@ export class CaveLevel1 extends Level {
       // Check collision using distance-based detection instead of hitbox
       const collisionDistance = 12; // Collision radius (reduced from 20)
       if (distance <= collisionDistance) {
-        // Baddy hit the hero
-        //console.log("Baddy collided with hero! Baddy center:", {x: baddyCenterX, y: baddyCenterY}, "Hero center:", {x: heroCenterX, y: heroCenterY});
-        this.hero.takeDamage(10, new Vector2(baddyCenterX, baddyCenterY)); // 10 damage per hit with knockback
+        // Trigger battle instead of taking damage
+        console.log("Hero collided with baddy! Starting battle...");
+        this.triggerBattleWithBaddy(baddy);
       } else {
         //console.log("No collision detected");
       }
+    });
+  }
+
+  triggerBattleWithBaddy(baddy) {
+    // Import BattleScene dynamically to avoid circular dependencies
+    import("./BattleScene.js").then(({BattleScene}) => {
+      events.emit("CHANGE_LEVEL", new BattleScene({
+        originalLevel: "CaveLevel1",
+        baddyData: {
+          health: baddy.health,
+          maxHealth: baddy.maxHealth,
+          attackPower: baddy.attackPower
+        }
+      }));
     });
   }
 
