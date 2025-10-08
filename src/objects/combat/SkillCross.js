@@ -1,10 +1,12 @@
 import {GameObject} from "../../GameObject.js";
 import {Vector2} from "../../Vector2.js";
+import {SkillBook} from "./SkillBook.js";
 
 export class SkillCross extends GameObject {
-  constructor({ hero }) {
+  constructor({ hero, battle }) {
     super({});
     this.hero = hero;
+    this.battle = battle;
     this.active = false;
     this.selected = null;
     this.radius = 8;
@@ -61,13 +63,19 @@ export class SkillCross extends GameObject {
       { letter: "A", px: cx - dist, py: cy },
     ];
 
+    const availablePoints = this.battle?.skillPoints ?? 0;
+
     const drawNode = (node) => {
       const isSelected = !!this.selected && this.selected === node.letter;
       const dimOthers = !!this.selected && !isSelected;
+      const skill = this._getSkillForLetter(node.letter);
+      const cost = SkillBook.get(skill?.name)?.cost ?? 1;
+      const affordable = cost <= availablePoints;
 
       ctx.save();
       const baseAlpha = this.animT <= 0 ? 0 : 1.0;
-      ctx.globalAlpha = (dimOthers ? 0.25 : 1.0) * baseAlpha;
+      const unavailableAlpha = affordable ? 1.0 : 0.4;
+      ctx.globalAlpha = (dimOthers ? 0.25 : 1.0) * baseAlpha * unavailableAlpha;
 
       ctx.fillStyle = isSelected ? "#FFE08A" : "#FFFFFF";
       ctx.strokeStyle = isSelected ? "#FF9E3B" : "#222222";
@@ -92,7 +100,9 @@ export class SkillCross extends GameObject {
     if (this.selected && this.animT > 0) {
       const selectedNode = nodes.find(n => n.letter === this.selected);
       const skill = this._getSkillForLetter(this.selected);
-      const label = skill?.name ?? "";
+      const sb = SkillBook.get(skill?.name);
+      const label = sb?.name ?? "";
+      const cost = sb?.cost ?? 1;
       if (label) {
         const labelX = selectedNode.px + this.radius + 6;
         const labelY = selectedNode.py - 5;
@@ -102,11 +112,11 @@ export class SkillCross extends GameObject {
         ctx.globalAlpha = 0.6;
         ctx.font = "bold 8px 'Retro Gaming', monospace";
         ctx.textBaseline = "top";
-        ctx.fillText(label.toUpperCase(), labelX + 1, labelY + 1);
+        ctx.fillText((label + ` (${cost})`).toUpperCase(), labelX + 1, labelY + 1);
 
         ctx.globalAlpha = 1.0;
         ctx.fillStyle = "#FFE08A";
-        ctx.fillText(label.toUpperCase(), labelX, labelY);
+        ctx.fillText((label + ` (${cost})`).toUpperCase(), labelX, labelY);
         ctx.restore();
       }
     }
@@ -139,5 +149,5 @@ export class SkillCross extends GameObject {
     return null;
   }
 }
-
+ 
 

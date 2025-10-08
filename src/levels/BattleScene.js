@@ -18,6 +18,7 @@ import {SliceEffect} from "../objects/combat/SliceEffect.js";
 import {ParrySparkBurst} from "../objects/combat/ParrySparkBurst.js";
 import {FloatingCounterText} from "../objects/combat/FloatingCounterText.js";
 import {SkillCross} from "../objects/combat/SkillCross.js";
+import {SkillBook} from "../objects/combat/SkillBook.js";
 
 export class BattleScene extends Level {
   constructor(params={}) {
@@ -38,10 +39,10 @@ export class BattleScene extends Level {
     ];
     const pick = () => randomNames[Math.floor(Math.random() * randomNames.length)];
     const skillsLoadout = {
-      top:    { key: "W", name: pick(), attackPower: 20, animation: "basic" },
-      right:  { key: "D", name: pick(), attackPower: 20, animation: "basic" },
-      bottom: { key: "S", name: pick(), attackPower: 20, animation: "basic" },
-      left:   { key: "A", name: pick(), attackPower: 20, animation: "basic" },
+      top:    { key: "W", name: pick() },
+      right:  { key: "D", name: pick() },
+      bottom: { key: "X", name: "Starfall" },
+      left:   { key: "A", name: pick() },
     };
     const hero = new Hero(heroBattlePosition.x, heroBattlePosition.y, { skills: skillsLoadout });
     this.addChild(hero);
@@ -75,6 +76,9 @@ export class BattleScene extends Level {
     this.battleStarted = false;
     this.battleComplete = false;
 
+    // Skill points state
+    this.skillPoints = 0;
+
     // Attack state
     this.isAttacking = false;
     this.attackPhase = "idle"; // idle | dashing | impact | retreat
@@ -84,6 +88,14 @@ export class BattleScene extends Level {
     this.retreatFriction = 0.92;
     this.attackTargetX = null;
     this.impactTimer = 0;
+
+    // Resolved skill and starfall state
+    this.resolvedSkill = null; // { name, attackPower, animationType }
+    this.starfallPhase = "idle"; // idle | ascend | flash | dive | impact | retreat
+    this.starfallAscendHeight = 28;
+    this.starfallAscendSpeed = 0.12; // px/ms
+    this.starfallDiveSpeed = 0.5; // px/ms
+    this.starfallImpactTimer = 0;
 
     // Enemy attack state (mirrored)
     this.enemyIsAttacking = false;
@@ -143,13 +155,16 @@ export class BattleScene extends Level {
 
     // Create skill cross UI attached to hero so it follows his position
     if (this.hero) {
-      this.skillCross = new SkillCross({ hero: this.hero });
+      this.skillCross = new SkillCross({ hero: this.hero, battle: this });
       this.hero.addChild(this.skillCross);
       this.skillCross.active = false;
     }
 
     // Request battle BGM immediately on scene appear
     //audio.playLoop("battleTheme", { volume: 0.45 });
+
+    // Emit initial skill points for HUD
+    this.emitSkillPointsChanged();
   }
 
   startBattle() {
@@ -159,10 +174,10 @@ export class BattleScene extends Level {
     events.emit("CAMERA_FOLLOW_ENABLED", false);
     
     // Show battle message
-    console.log("The battle begins! Press X to attack!");
+    console.log("The battle begins! Press C to basic attack!");
     
     // You could emit an event here to show battle UI or text
-    events.emit("BATTLE_MESSAGE", "The battle begins! Press X to attack!");
+    events.emit("BATTLE_MESSAGE", "The battle begins! Press C to basic attack!");
   }
 
   exitBattle() {
@@ -220,6 +235,8 @@ export class BattleScene extends Level {
           // Clearing selection when collapsing
           if (!this.skillCross.isExpanded) {
             this.skillSelectedKey = null;
+            // Also clear UI selection so translucency is removed
+            this.skillCross.setSelected(null);
           }
         }
       }
@@ -238,8 +255,16 @@ export class BattleScene extends Level {
           } else if (this.skillSelectedKey === letter) {
             // Second press confirms -> begin attack using that skill
             const skill = this.getSkillForLetter(letter);
-            this.pendingSkill = skill;
-            this.beginHeroAttack();
+            const cost = SkillBook.get(skill?.name)?.cost ?? 1;
+            if (cost <= this.skillPoints) {
+              // Spend and update HUD
+              this.skillPoints -= cost;
+              this.emitSkillPointsChanged();
+              this.pendingSkill = skill;
+              this.beginHeroAttack();
+            } else {
+              // Not enough points: ignore confirm
+            }
           } else {
             // Change selection to a different letter
             this.skillSelectedKey = letter;
@@ -249,22 +274,101 @@ export class BattleScene extends Level {
       }
     }
 
-    // KeyX triggers hero attack only on hero's turn (fallback/basic)
+    // KeyC triggers hero basic attack only on hero's turn
     const input = root?.input;
-    if (input?.getActionJustPressed && input.getActionJustPressed("KeyX") && !this.isAttacking && !this.enemyIsAttacking && this.currentTurn === "hero") {
+    if (input?.getActionJustPressed && input.getActionJustPressed("KeyC") && !this.isAttacking && !this.enemyIsAttacking && this.currentTurn === "hero") {
       if (!this.battleStarted) {
         this.startBattle();
       }
-      // If the cross is expanded, KeyX is used for bottom selection/confirm; ignore fallback here
-      if (!this.skillCross?.isExpanded) {
-        // Fallback: treat as basic attack with no selected skill
-        this.pendingSkill = null;
-        this.beginHeroAttack();
-      }
+      // Basic attack
+      this.pendingSkill = null; // resolves to Basic
+      this.beginHeroAttack();
     }
 
     // Process hero attack movement when active
-    if (this.isAttacking && this.attackPhase === "dashing") {
+    if (this.isAttacking && this.resolvedSkill?.animationType === "starfall") {
+      // Starfall sequence handling
+      if (this.starfallPhase === "ascend") {
+        // Move up until reached ascend height
+        const targetY = this.heroStartPosition.y - this.starfallAscendHeight;
+        const stepY = this.starfallAscendSpeed * delta;
+        this.hero.position.y = Math.max(targetY, this.hero.position.y - stepY);
+        this.hero.body.animations.play("walkUp");
+        if (this.hero.position.y <= targetY + 0.001) {
+          // Begin brief yellow flash
+          this.starfallPhase = "flash";
+          this.starfallImpactTimer = 180;
+          this.hero.body.animations.play("standRight");
+          const w = this.hero.body.frameSize.x * (this.hero.body.scale ?? 1);
+          const h = this.hero.body.frameSize.y * (this.hero.body.scale ?? 1);
+          const fxContainer = new GameObject({ position: new Vector2(-6, -12) });
+          const flash = new FlashOverlay({ width: w, height: h, duration: this.starfallImpactTimer, color: "#FFD84A", alpha: 0.6 });
+          fxContainer.addChild(flash);
+          this.hero.addChild(fxContainer);
+        }
+      } else if (this.starfallPhase === "flash") {
+        this.starfallImpactTimer -= delta;
+        if (this.starfallImpactTimer <= 0) {
+          // Begin dive towards baddy target X and baseline Y
+          this.starfallPhase = "dive";
+          this.hero.body.animations.play("walkRight");
+        }
+      } else if (this.starfallPhase === "dive") {
+        const targetX = this.attackTargetX;
+        const targetY = this.heroStartPosition.y;
+        const dx = targetX - this.hero.position.x;
+        const dy = targetY - this.hero.position.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist <= 0.5) {
+          this.hero.position.x = targetX;
+          this.hero.position.y = targetY;
+          this.starfallPhase = "impact";
+          this.starfallImpactTimer = 200;
+          this.hero.body.animations.play("standRight");
+          this.doHitEffects();
+        } else {
+          const step = this.starfallDiveSpeed * delta;
+          const nx = dx / (dist || 1);
+          const ny = dy / (dist || 1);
+          const move = Math.min(step, dist);
+          this.hero.position.x += nx * move;
+          this.hero.position.y += ny * move;
+        }
+      } else if (this.starfallPhase === "impact") {
+        this.starfallImpactTimer -= delta;
+        if (this.starfallImpactTimer <= 0) {
+          this.starfallPhase = "retreat";
+          this.attackSpeed = Math.max(0.5, this.attackSpeed);
+          this.hero.body.animations.play("walkLeft");
+        }
+      } else if (this.starfallPhase === "retreat") {
+        // Zip back fast to start position
+        const dx = this.heroStartPosition.x - this.hero.position.x;
+        const dy = this.heroStartPosition.y - this.hero.position.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist <= 1.0) {
+          this.hero.position.x = this.heroStartPosition.x;
+          this.hero.position.y = this.heroStartPosition.y;
+          this.starfallPhase = "idle";
+          this.isAttacking = false;
+          this.resolvedSkill = null;
+          this.hero.body.animations.play("standRight");
+          // Reset selection/UI and advance to enemy turn
+          this.resetSkillSelectionUI();
+          this.consumeTurn();
+          if (this.currentTurn === "baddy") {
+            this.beginEnemyAttack();
+          }
+        } else {
+          const step = Math.max(0.5, this.attackSpeed) * delta;
+          const nx = dx / (dist || 1);
+          const ny = dy / (dist || 1);
+          const move = Math.min(step, dist);
+          this.hero.position.x += nx * move;
+          this.hero.position.y += ny * move;
+        }
+      }
+    } else if (this.isAttacking && this.attackPhase === "dashing") {
       // accelerate forward
       this.attackSpeed = Math.min(this.attackMaxSpeed, this.attackSpeed + this.attackAccel * delta);
       const remaining = (this.attackTargetX ?? this.hero.position.x) - this.hero.position.x;
@@ -386,6 +490,9 @@ export class BattleScene extends Level {
         // Successful parry: effects + mitigate damage
         const mitigated = Math.round(this.enemyImpactPending.damage * this.parryDamageMultiplier);
         this.doParryEffectsOnHero();
+        // Award a skill point on successful parry
+        this.skillPoints += 1;
+        this.emitSkillPointsChanged();
         if (mitigated > 0) {
           this.hero.takeDamage(mitigated, this.baddy.position, this.heroStartPosition);
         }
@@ -400,7 +507,7 @@ export class BattleScene extends Level {
 
   doHitEffects() {
     // Damage
-    const dmg = this.pendingSkill?.attackPower ?? 20;
+    const dmg = this.resolvedSkill?.attackPower ?? 20;
     this.baddy.takeDamage(dmg);
 
     // Flash overlay
@@ -492,19 +599,34 @@ export class BattleScene extends Level {
     if (!this.battleStarted) {
       this.startBattle();
     }
-    // Begin attack dash towards baddy using the selected or basic attack
-    this.isAttacking = true;
-    this.attackPhase = "dashing";
-    this.attackSpeed = 0;
-
-    // Face right
-    this.hero.facingDirection = "RIGHT";
-    this.hero.body.animations.play("walkRight");
+    // Resolve skill from selection; fallback to basic
+    const selectedName = this.pendingSkill?.name ?? "Basic";
+    this.resolvedSkill = SkillBook.get(selectedName);
 
     // Compute stop X slightly left of the baddy
     const bWidth = this.baddy.sprite.frameSize.x * (this.baddy.sprite.scale ?? 1);
     const padding = 8;
     this.attackTargetX = this.baddy.position.x - Math.max(12, bWidth * 0.35) - padding;
+
+    // Begin attack using resolved animation type
+    this.isAttacking = true;
+    // Face right
+    this.hero.facingDirection = "RIGHT";
+
+    if (this.resolvedSkill.animationType === "starfall") {
+      this.starfallPhase = "ascend";
+      this.attackSpeed = 0;
+      this.starfallImpactTimer = 0;
+      this.hero.body.animations.play("walkUp");
+    } else {
+      // basic
+      // Award a skill point for using a basic attack
+      this.skillPoints += 1;
+      this.emitSkillPointsChanged();
+      this.attackPhase = "dashing";
+      this.attackSpeed = 0;
+      this.hero.body.animations.play("walkRight");
+    }
   }
 
   resetSkillSelectionUI() {
@@ -517,10 +639,14 @@ export class BattleScene extends Level {
     const skillMap = {
       W: this.hero?.skills?.top,
       D: this.hero?.skills?.right,
-      S: this.hero?.skills?.bottom,
+      X: this.hero?.skills?.bottom,
       A: this.hero?.skills?.left,
     };
     return skillMap[letter] ?? null;
+  }
+
+  emitSkillPointsChanged() {
+    events.emit("SKILL_POINTS_CHANGED", { count: this.skillPoints });
   }
 }
  

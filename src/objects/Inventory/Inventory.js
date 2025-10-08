@@ -13,18 +13,9 @@ export class Inventory extends GameObject {
     this.drawLayer = "HUD";
 
     this.nextId = 0;
-    this.items = [
-      {
-        id: -1,
-        image: resources.images.rod
-      },
-      {
-        id: -2,
-        image: resources.images.rod
-      }
-    ]
+    this.items = [];
 
-    // React to Hero picking up an item
+    // React to Hero picking up an item (legacy demo)
     events.on("HERO_PICKS_UP_ITEM", this, data => {
       this.nextId += 1;
       this.items.push({
@@ -34,10 +25,12 @@ export class Inventory extends GameObject {
       this.renderInventory();
     })
 
-    // Demo removing of something (could happen on item use)
-    // setTimeout(() => {
-    //   this.removeFromInventory(-2)
-    // }, 2000)
+    // Listen for skill points changes to render rods as points
+    events.on("SKILL_POINTS_CHANGED", this, ({ count }) => {
+      const num = Math.max(0, Math.floor(count || 0));
+      this.items = Array.from({ length: num }).map((_, idx) => ({ id: idx + 1, image: resources.images.rod }));
+      this.renderInventory();
+    })
 
     // Draw initial state on bootup
     this.renderInventory();
@@ -62,8 +55,19 @@ export class Inventory extends GameObject {
     this.items = this.items.filter(item => item.id !== id);
     this.renderInventory();
   }
-
 }
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
 
 
 
