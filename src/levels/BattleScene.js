@@ -24,6 +24,9 @@ export class BattleScene extends Level {
   constructor(params={}) {
     super({});
     
+    // Store global hero state for persistence
+    this.globalHeroState = params.globalHeroState;
+    
     // Battle background - using a simple background for now
     this.background = new Sprite({
       resource: resources.images.sky, // Using sky as battle background
@@ -39,21 +42,39 @@ export class BattleScene extends Level {
     ];
     const pick = () => randomNames[Math.floor(Math.random() * randomNames.length)];
     const skillsLoadout = {
-      top:    { key: "W", name: pick() },
+      top:    { key: "W", name: "Krakatoa" },
       right:  { key: "D", name: pick() },
       bottom: { key: "X", name: "Starfall" },
       left:   { key: "A", name: pick() },
     };
     const hero = new Hero(heroBattlePosition.x, heroBattlePosition.y, { skills: skillsLoadout });
+    
+    // Restore hero experience/level from global state if available
+    if (this.globalHeroState) {
+      hero.level = this.globalHeroState.level || 1;
+      hero.experience = this.globalHeroState.experience || 0;
+      hero.experienceToNextLevel = this.globalHeroState.experienceToNextLevel || 1000;
+      // Update experience bar
+      if (hero.experienceBar) {
+        hero.experienceBar.setExperience(hero.experience, hero.experienceToNextLevel);
+      }
+    }
+    
     this.addChild(hero);
     this.hero = hero;
-    
+    console.log("Battle hero created with health:", this.hero.health, "/", this.hero.maxHealth);
+
+    // Hide experience bar during battle (will show only when enemy dies)
+    if (this.hero.experienceBar) {
+      this.hero.experienceBar.visible = false;
+    }
+
     // Set hero to face right and disable movement
     this.hero.facingDirection = "RIGHT";
     this.hero.body.animations.play("standRight");
     this.hero.isLocked = true; // Disable movement in battle
     
-    // Set heroStartPosition for camera centering
+    // Set heroStartPosition to hero's actual position (for attack animations)
     this.heroStartPosition = heroBattlePosition;
 
     // Position baddy on the right side of the screen (but not too far right)
@@ -68,6 +89,12 @@ export class BattleScene extends Level {
     this.addChild(baddy);
     this.baddy = baddy;
     this.baddyStartPosition = baddyBattlePosition;
+    console.log("Battle baddy created with health:", this.baddy.health, "/", this.baddy.maxHealth, "attack:", this.baddy.attackPower);
+    
+    // Calculate the center point between hero and baddy for camera positioning
+    const centerX = (heroBattlePosition.x + baddyBattlePosition.x) / 2;
+    const centerY = (heroBattlePosition.y + baddyBattlePosition.y) / 2;
+    this.battleCameraCenter = new Vector2(centerX, centerY);
 
     // Store the original level to return to
     this.originalLevel = params.originalLevel || "CaveLevel1";
@@ -75,35 +102,18 @@ export class BattleScene extends Level {
     // Battle state
     this.battleStarted = false;
     this.battleComplete = false;
+    this.enemyDefeated = false; // Flag to stop all battle logic when enemy dies
 
     // Skill points state
     this.skillPoints = 0;
 
-    // Attack state
+    // Skill animation system (replaces old attack state)
+    this.currentSkillAnimation = null; // Active SkillAnimation instance
     this.isAttacking = false;
-    this.attackPhase = "idle"; // idle | dashing | impact | retreat
-    this.attackSpeed = 0; // px/ms
-    this.attackAccel = 0.01; // px/ms^2
-    this.attackMaxSpeed = 0.35; // px/ms
-    this.retreatFriction = 0.92;
-    this.attackTargetX = null;
-    this.impactTimer = 0;
-
-    // Resolved skill and starfall state
-    this.resolvedSkill = null; // { name, attackPower, animationType }
-    this.starfallPhase = "idle"; // idle | ascend | flash | dive | impact | retreat
-    this.starfallAscendHeight = 28;
-    this.starfallAscendSpeed = 0.12; // px/ms
-    this.starfallDiveSpeed = 0.5; // px/ms
-    this.starfallImpactTimer = 0;
-
-    // Enemy attack state (mirrored)
+    
+    // Enemy attack animation
+    this.enemySkillAnimation = null;
     this.enemyIsAttacking = false;
-    this.enemyAttackPhase = "idle";
-    this.enemyAttackSpeed = 0;
-    this.enemyAttackMaxSpeed = 0.35;
-    this.enemyAttackTargetX = null;
-    this.enemyImpactTimer = 0;
 
     // Parry config/state (tweakable)
     this.timeMs = 0; // scene clock in ms
@@ -134,9 +144,27 @@ export class BattleScene extends Level {
   }
 
   ready() {
+    // Disable camera follow immediately when battle scene loads
+    // This prevents the camera from following hero movements during battle
+    events.emit("CAMERA_FOLLOW_ENABLED", false);
+    
+    // Manually center the camera on the battle center point (between hero and baddy)
+    // instead of on the hero's position
+    if (this.parent && this.parent.camera && this.battleCameraCenter) {
+      this.parent.camera.centerPositionOnTarget(this.battleCameraCenter);
+    }
+    
     // Listen for battle events
     events.on("BATTLE_COMPLETE", this, () => {
       this.exitBattle();
+    });
+
+    // Listen for baddy defeat to award experience (backup in case direct check fails)
+    events.on("BADDY_DEFEATED", this, (data) => {
+      if (!this.enemyDefeated) {
+        this.enemyDefeated = true;
+        this.handleEnemyDefeat();
+      }
     });
     
     // Listen for hero action requests (Space key)
@@ -170,8 +198,6 @@ export class BattleScene extends Level {
   startBattle() {
     console.log("Battle started!");
     this.battleStarted = true;
-    // Disable camera follow during battle to prevent jitter from knockback
-    events.emit("CAMERA_FOLLOW_ENABLED", false);
     
     // Show battle message
     console.log("The battle begins! Press C to basic attack!");
@@ -183,6 +209,12 @@ export class BattleScene extends Level {
   exitBattle() {
     console.log("Exiting battle scene");
     this.battleComplete = true;
+
+    // Hide experience bar when leaving battle
+    if (this.hero && this.hero.experienceBar) {
+      this.hero.experienceBar.visible = false;
+    }
+
     // Re-enable camera follow when leaving battle
     events.emit("CAMERA_FOLLOW_ENABLED", true);
     // Stop battle BGM with a short fade
@@ -192,15 +224,37 @@ export class BattleScene extends Level {
       this.parent.removeChild(this.turnOrderHUD);
       this.turnOrderHUD = null;
     }
-    
-    // Return to the original level
+
+    // Update global hero state with current hero stats
+    if (this.hero && this.globalHeroState) {
+      this.globalHeroState.level = this.hero.level;
+      this.globalHeroState.experience = this.hero.experience;
+      this.globalHeroState.experienceToNextLevel = this.hero.experienceToNextLevel;
+    }
+
+    // Prepare battle result data
+    const battleResult = {
+      baddyDefeated: !this.baddy.isAlive,
+      baddyPosition: this.baddy ? this.baddy.position.duplicate() : null,
+      heroExperience: this.hero ? {
+        level: this.hero.level,
+        experience: this.hero.experience,
+        experienceToNextLevel: this.hero.experienceToNextLevel
+      } : null
+    };
+
+    // Return to the original level with battle result data
     if (this.originalLevel === "CaveLevel1") {
       events.emit("CHANGE_LEVEL", new CaveLevel1({
-        heroPosition: new Vector2(gridCells(3), gridCells(6))
+        heroPosition: new Vector2(gridCells(3), gridCells(6)),
+        battleResult: battleResult,
+        globalHeroState: this.globalHeroState
       }));
     } else if (this.originalLevel === "OutdoorLevel1") {
       events.emit("CHANGE_LEVEL", new OutdoorLevel1({
-        heroPosition: new Vector2(gridCells(6), gridCells(5))
+        heroPosition: new Vector2(gridCells(6), gridCells(5)),
+        battleResult: battleResult,
+        globalHeroState: this.globalHeroState
       }));
     }
   }
@@ -209,24 +263,41 @@ export class BattleScene extends Level {
     // Advance scene clock
     this.timeMs += delta;
 
-    // Auto trigger enemy when it's their turn and idle
-    if (this.battleStarted && !this.isAttacking && !this.enemyIsAttacking && this.currentTurn === "baddy") {
+    // Stop all battle logic immediately if enemy is defeated
+    if (this.enemyDefeated) {
+      return;
+    }
+
+    // Stop battle logic if enemy is defeated (check state directly)
+    if (this.baddy && !this.baddy.isAlive && this.baddy.opacity <= 0) {
+      // Set defeated flag if not already set
+      if (!this.enemyDefeated) {
+        this.enemyDefeated = true;
+        // Trigger the defeat logic
+        this.handleEnemyDefeat();
+      }
+      return;
+    }
+
+
+    // Auto trigger enemy when it's their turn and idle (but only if enemy is not fading)
+    if (this.battleStarted && !this.isAttacking && !this.enemyIsAttacking && this.currentTurn === "baddy" && !this.baddy.isFadingOut) {
       this.beginEnemyAttack();
     }
 
     // Determine if we're in hero selection phase (hero's turn and idle)
     const isHeroTurnIdle = !this.isAttacking && !this.enemyIsAttacking && this.currentTurn === "hero";
 
-    // Toggle SkillCross visibility/state
-    if (this.skillCross) {
+    // Toggle SkillCross visibility/state (but not if battle is over)
+    if (this.skillCross && !this.enemyDefeated) {
       this.skillCross.active = !!isHeroTurnIdle;
       if (!isHeroTurnIdle && this.skillSelectedKey) {
         this.resetSkillSelectionUI();
       }
     }
 
-    // Handle expansion toggle and selection during hero's turn
-    if (isHeroTurnIdle) {
+    // Handle expansion toggle and selection during hero's turn (but not if battle is over)
+    if (isHeroTurnIdle && !this.enemyDefeated) {
       const input = root?.input;
       // S toggles expand/collapse of the cross
       if (input?.getActionJustPressed && input.getActionJustPressed("KeyS")) {
@@ -274,9 +345,9 @@ export class BattleScene extends Level {
       }
     }
 
-    // KeyC triggers hero basic attack only on hero's turn
+    // KeyC triggers hero basic attack only on hero's turn (but not if battle is over)
     const input = root?.input;
-    if (input?.getActionJustPressed && input.getActionJustPressed("KeyC") && !this.isAttacking && !this.enemyIsAttacking && this.currentTurn === "hero") {
+    if (input?.getActionJustPressed && input.getActionJustPressed("KeyC") && !this.isAttacking && !this.enemyIsAttacking && this.currentTurn === "hero" && !this.enemyDefeated) {
       if (!this.battleStarted) {
         this.startBattle();
       }
@@ -285,140 +356,42 @@ export class BattleScene extends Level {
       this.beginHeroAttack();
     }
 
-    // Process hero attack movement when active
-    if (this.isAttacking && this.resolvedSkill?.animationType === "starfall") {
-      // Starfall sequence handling
-      if (this.starfallPhase === "ascend") {
-        // Move up until reached ascend height
-        const targetY = this.heroStartPosition.y - this.starfallAscendHeight;
-        const stepY = this.starfallAscendSpeed * delta;
-        this.hero.position.y = Math.max(targetY, this.hero.position.y - stepY);
-        this.hero.body.animations.play("walkUp");
-        if (this.hero.position.y <= targetY + 0.001) {
-          // Begin brief yellow flash
-          this.starfallPhase = "flash";
-          this.starfallImpactTimer = 180;
-          this.hero.body.animations.play("standRight");
-          const w = this.hero.body.frameSize.x * (this.hero.body.scale ?? 1);
-          const h = this.hero.body.frameSize.y * (this.hero.body.scale ?? 1);
-          const fxContainer = new GameObject({ position: new Vector2(-6, -12) });
-          const flash = new FlashOverlay({ width: w, height: h, duration: this.starfallImpactTimer, color: "#FFD84A", alpha: 0.6 });
-          fxContainer.addChild(flash);
-          this.hero.addChild(fxContainer);
-        }
-      } else if (this.starfallPhase === "flash") {
-        this.starfallImpactTimer -= delta;
-        if (this.starfallImpactTimer <= 0) {
-          // Begin dive towards baddy target X and baseline Y
-          this.starfallPhase = "dive";
-          this.hero.body.animations.play("walkRight");
-        }
-      } else if (this.starfallPhase === "dive") {
-        const targetX = this.attackTargetX;
-        const targetY = this.heroStartPosition.y;
-        const dx = targetX - this.hero.position.x;
-        const dy = targetY - this.hero.position.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist <= 0.5) {
-          this.hero.position.x = targetX;
-          this.hero.position.y = targetY;
-          this.starfallPhase = "impact";
-          this.starfallImpactTimer = 200;
-          this.hero.body.animations.play("standRight");
-          this.doHitEffects();
-        } else {
-          const step = this.starfallDiveSpeed * delta;
-          const nx = dx / (dist || 1);
-          const ny = dy / (dist || 1);
-          const move = Math.min(step, dist);
-          this.hero.position.x += nx * move;
-          this.hero.position.y += ny * move;
-        }
-      } else if (this.starfallPhase === "impact") {
-        this.starfallImpactTimer -= delta;
-        if (this.starfallImpactTimer <= 0) {
-          this.starfallPhase = "retreat";
-          this.attackSpeed = Math.max(0.5, this.attackSpeed);
-          this.hero.body.animations.play("walkLeft");
-        }
-      } else if (this.starfallPhase === "retreat") {
-        // Zip back fast to start position
-        const dx = this.heroStartPosition.x - this.hero.position.x;
-        const dy = this.heroStartPosition.y - this.hero.position.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist <= 1.0) {
-          this.hero.position.x = this.heroStartPosition.x;
-          this.hero.position.y = this.heroStartPosition.y;
-          this.starfallPhase = "idle";
-          this.isAttacking = false;
-          this.resolvedSkill = null;
-          this.hero.body.animations.play("standRight");
-          // Reset selection/UI and advance to enemy turn
-          this.resetSkillSelectionUI();
+    // Process hero attack animation when active
+    if (this.isAttacking && this.currentSkillAnimation) {
+      const isComplete = this.currentSkillAnimation.step(delta);
+      if (isComplete) {
+        // Animation finished
+        this.isAttacking = false;
+        this.currentSkillAnimation = null;
+        // Reset selection/UI and advance to enemy turn (but not if battle is over)
+        this.resetSkillSelectionUI();
+        if (!this.enemyDefeated) {
           this.consumeTurn();
           if (this.currentTurn === "baddy") {
             this.beginEnemyAttack();
           }
-        } else {
-          const step = Math.max(0.5, this.attackSpeed) * delta;
-          const nx = dx / (dist || 1);
-          const ny = dy / (dist || 1);
-          const move = Math.min(step, dist);
-          this.hero.position.x += nx * move;
-          this.hero.position.y += ny * move;
-        }
-      }
-    } else if (this.isAttacking && this.attackPhase === "dashing") {
-      // accelerate forward
-      this.attackSpeed = Math.min(this.attackMaxSpeed, this.attackSpeed + this.attackAccel * delta);
-      const remaining = (this.attackTargetX ?? this.hero.position.x) - this.hero.position.x;
-      const stepX = Math.min(Math.max(this.attackSpeed * delta, 0), Math.max(0, remaining));
-      this.hero.position.x += stepX;
-
-      if (this.hero.position.x >= (this.attackTargetX - 0.5)) {
-        this.hero.position.x = this.attackTargetX;
-        this.attackPhase = "impact";
-        this.impactTimer = 180;
-        this.hero.body.animations.play("standRight");
-        this.doHitEffects();
-      }
-    } else if (this.isAttacking && this.attackPhase === "impact") {
-      this.impactTimer -= delta;
-      if (this.impactTimer <= 0) {
-        this.attackPhase = "retreat";
-        this.attackSpeed = Math.max(0.2, this.attackSpeed);
-        this.hero.body.animations.play("walkLeft");
-      }
-    } else if (this.isAttacking && this.attackPhase === "retreat") {
-      const dir = Math.sign(this.heroStartPosition.x - this.hero.position.x) || -1;
-      const vx = this.attackSpeed * dir;
-      this.hero.position.x += vx * delta;
-      this.attackSpeed *= this.retreatFriction;
-
-      const distBack = Math.abs(this.heroStartPosition.x - this.hero.position.x);
-      if (distBack <= 1.0 || this.attackSpeed < 0.02) {
-        this.hero.position.x = this.heroStartPosition.x;
-        this.attackPhase = "idle";
-        this.isAttacking = false;
-        this.hero.body.animations.play("standRight");
-        // Reset selection/UI and advance to enemy turn
-        this.resetSkillSelectionUI();
-        this.consumeTurn();
-        if (this.currentTurn === "baddy") {
-          this.beginEnemyAttack();
         }
       }
     }
 
-    // Enemy mirrored attack processing
-    if (this.enemyIsAttacking) {
-      // If parry freeze active, hold enemy in place and skip retreat motion
+    // Enemy attack processing (but not if battle is over)
+    if (this.enemyIsAttacking && !this.enemyDefeated) {
+      // Stop enemy attack if enemy just died during animation
+      if (this.baddy && !this.baddy.isAlive) {
+        this.enemyIsAttacking = false;
+        if (this.enemySkillAnimation) {
+          this.enemySkillAnimation = null;
+        }
+        // Don't consume turn since battle is over
+        return;
+      }
+      // If parry freeze active, hold enemy in place and skip animation
       if (this.enemyParried) {
         this.enemyParryFreezeTimer -= delta;
         // Keep enemy at impact position and idle anim
         this.baddy.sprite.animations.play("standLeft");
         if (this.enemyParryFreezeTimer <= 0) {
-          // Apply counter damage to baddy, then resume retreat from here
+          // Apply counter damage to baddy, then let animation complete
           const w = this.baddy.sprite.frameSize.x * (this.baddy.sprite.scale ?? 1);
           const h = this.baddy.sprite.frameSize.y * (this.baddy.sprite.scale ?? 1);
           const flash = new FlashOverlay({ width: w, height: h, duration: 120 });
@@ -427,63 +400,42 @@ export class BattleScene extends Level {
           this.baddy.addChild(slice);
           this.baddy.takeDamage(this.parryCounterDamage ?? 8);
           this.enemyParried = false;
-          this.enemyAttackPhase = "retreat";
-          this.enemyAttackSpeed = Math.max(0.25, this.enemyAttackSpeed);
-          this.baddy.sprite.animations.play("walkRight");
+          // Continue animation retreat phase (but not if baddy is dead/fading)
+          if (!this.baddy.isFadingOut && this.baddy.isAlive) {
+            this.baddy.sprite.animations.play("walkRight");
+          }
         }
-        // Skip further enemy movement while frozen
-      } else {
-      if (this.enemyAttackPhase === "dashing") {
-        this.enemyAttackSpeed = Math.min(this.enemyAttackMaxSpeed, this.enemyAttackSpeed + this.attackAccel * delta);
-        const remaining = (this.enemyAttackTargetX ?? this.baddy.position.x) - this.baddy.position.x;
-        const dir = Math.sign(remaining) || -1;
-        const stepX = dir * Math.min(Math.abs(remaining), this.enemyAttackSpeed * delta);
-        this.baddy.position.x += stepX;
-
-        if (Math.abs(this.baddy.position.x - this.enemyAttackTargetX) <= 0.5) {
-          this.baddy.position.x = this.enemyAttackTargetX;
-          this.enemyAttackPhase = "impact";
-          this.enemyImpactTimer = 180;
-          this.baddy.sprite.animations.play("standLeft");
+      } else if (this.enemySkillAnimation) {
+        // Run enemy skill animation
+        const isComplete = this.enemySkillAnimation.step(delta);
+        
+        // Check for impact phase to trigger parry window
+        if (this.enemySkillAnimation.phase === "impact" && !this.enemyImpactPending) {
           // Schedule impact resolution with parry window around now
           const dmg = this.baddy.attackPower ?? 12;
           this.enemyImpactPending = { time: this.timeMs, damage: dmg };
           this.enemyImpactResolveAt = this.timeMs + 60; // slight delay to allow post window frames
-          this.doHitEffectsOnHero();
         }
-      } else if (this.enemyAttackPhase === "impact") {
-        this.enemyImpactTimer -= delta;
-        if (this.enemyImpactTimer <= 0) {
-          this.enemyAttackPhase = "retreat";
-          this.enemyAttackSpeed = Math.max(0.2, this.enemyAttackSpeed);
-          this.baddy.sprite.animations.play("walkRight");
-        }
-      } else if (this.enemyAttackPhase === "retreat") {
-        const dir = Math.sign(this.baddyStartPosition.x - this.baddy.position.x) || 1;
-        const vx = this.enemyAttackSpeed * dir;
-        this.baddy.position.x += vx * delta;
-        this.enemyAttackSpeed *= this.retreatFriction;
-
-        const distBack = Math.abs(this.baddyStartPosition.x - this.baddy.position.x);
-        if (distBack <= 1.0 || this.enemyAttackSpeed < 0.02) {
-          this.baddy.position.x = this.baddyStartPosition.x;
-          this.enemyAttackPhase = "idle";
+        
+        if (isComplete) {
+          // Animation finished
           this.enemyIsAttacking = false;
-          this.baddy.sprite.animations.play("standLeft");
-          // Advance to next (hero) turn
-          this.consumeTurn();
+          this.enemySkillAnimation = null;
+          // Advance to next (hero) turn (but not if battle is over)
+          if (!this.enemyDefeated) {
+            this.consumeTurn();
+          }
         }
-      }
       }
     }
 
-    // Capture parry input (Z key)
-    if (input?.getActionJustPressed && input.getActionJustPressed("KeyZ")) {
+    // Capture parry input (Z key) (but not if battle is over)
+    if (input?.getActionJustPressed && input.getActionJustPressed("KeyZ") && !this.enemyDefeated) {
       this.lastParryPressAt = this.timeMs;
     }
 
-    // Resolve pending enemy impact considering parry window
-    if (this.enemyImpactPending) {
+    // Resolve pending enemy impact considering parry window (but not if battle is over)
+    if (this.enemyImpactPending && !this.enemyDefeated) {
       const impactTime = this.enemyImpactPending.time;
       const parryOk = (this.lastParryPressAt >= (impactTime - this.parryPreMs)) && (this.lastParryPressAt <= (impactTime + this.parryPostMs));
       if (parryOk) {
@@ -499,31 +451,16 @@ export class BattleScene extends Level {
         this.enemyImpactPending = null;
       } else if (this.timeMs >= this.enemyImpactResolveAt) {
         // Window has passed with no parry: apply full damage
+        console.log("Applying enemy damage:", this.enemyImpactPending.damage, "Hero health before:", this.hero.health);
         this.hero.takeDamage(this.enemyImpactPending.damage, this.baddy.position, this.heroStartPosition);
+        console.log("Hero health after:", this.hero.health);
         this.enemyImpactPending = null;
       }
     }
   }
 
-  doHitEffects() {
-    // Damage
-    const dmg = this.resolvedSkill?.attackPower ?? 20;
-    this.baddy.takeDamage(dmg);
-
-    // Flash overlay
-    const w = this.baddy.sprite.frameSize.x * (this.baddy.sprite.scale ?? 1);
-    const h = this.baddy.sprite.frameSize.y * (this.baddy.sprite.scale ?? 1);
-    const flash = new FlashOverlay({ width: w, height: h, duration: 150 });
-    this.baddy.addChild(flash);
-
-    // Slice effect
-    const slice = new SliceEffect({ width: w, height: h, duration: 180 });
-    this.baddy.addChild(slice);
-  }
-
   doHitEffectsOnHero() {
     // Visual hit effects at impact moment; damage is now resolved via parry logic
-
     const w = this.hero.body.frameSize.x * (this.hero.body.scale ?? 1);
     const h = this.hero.body.frameSize.y * (this.hero.body.scale ?? 1);
     // Offset effects slightly up-left so they appear centered over the hero sprite
@@ -555,18 +492,26 @@ export class BattleScene extends Level {
 
   beginEnemyAttack() {
     this.enemyIsAttacking = true;
-    this.enemyAttackPhase = "dashing";
-    this.enemyAttackSpeed = 0;
-    this.baddy.sprite.animations.play("walkLeft");
-    const hWidth = this.hero.body.frameSize.x * (this.hero.body.scale ?? 1);
-    const padding = 8;
-    this.enemyAttackTargetX = this.hero.position.x + Math.max(12, hWidth * 0.35) + padding;
+    // Enemy always uses basic attack for now
+    this.enemySkillAnimation = SkillBook.createAnimation("Basic", {
+      battle: this,
+      attacker: this.baddy,
+      target: this.hero,
+      attackerStartPosition: this.baddyStartPosition,
+      targetStartPosition: this.heroStartPosition,
+      applyDamageOnImpact: false  // Damage is handled by parry system
+    });
+    this.enemySkillAnimation.start();
   }
 
   // Scheduler helpers
   ensureTurnQueue(n = 5) {
     while (this.turnQueue.length < n) {
-      if (this.heroNextAt <= this.baddyNextAt) {
+      if (this.enemyDefeated) {
+        // Only add hero turns if enemy is defeated
+        this.turnQueue.push("hero");
+        this.heroNextAt += this.heroInterval;
+      } else if (this.heroNextAt <= this.baddyNextAt) {
         this.turnQueue.push("hero");
         this.heroNextAt += this.heroInterval;
       } else {
@@ -601,32 +546,27 @@ export class BattleScene extends Level {
     }
     // Resolve skill from selection; fallback to basic
     const selectedName = this.pendingSkill?.name ?? "Basic";
-    this.resolvedSkill = SkillBook.get(selectedName);
+    const resolvedSkill = SkillBook.get(selectedName);
 
-    // Compute stop X slightly left of the baddy
-    const bWidth = this.baddy.sprite.frameSize.x * (this.baddy.sprite.scale ?? 1);
-    const padding = 8;
-    this.attackTargetX = this.baddy.position.x - Math.max(12, bWidth * 0.35) - padding;
-
-    // Begin attack using resolved animation type
-    this.isAttacking = true;
-    // Face right
-    this.hero.facingDirection = "RIGHT";
-
-    if (this.resolvedSkill.animationType === "starfall") {
-      this.starfallPhase = "ascend";
-      this.attackSpeed = 0;
-      this.starfallImpactTimer = 0;
-      this.hero.body.animations.play("walkUp");
-    } else {
-      // basic
-      // Award a skill point for using a basic attack
+    // Award a skill point for using a basic attack
+    if (resolvedSkill.animationType === "basic") {
       this.skillPoints += 1;
       this.emitSkillPointsChanged();
-      this.attackPhase = "dashing";
-      this.attackSpeed = 0;
-      this.hero.body.animations.play("walkRight");
     }
+
+    // Create skill animation using SkillBook
+    this.currentSkillAnimation = SkillBook.createAnimation(selectedName, {
+      battle: this,
+      attacker: this.hero,
+      target: this.baddy,
+      attackerStartPosition: this.heroStartPosition,
+      targetStartPosition: this.baddyStartPosition
+    });
+
+    // Begin attack
+    this.isAttacking = true;
+    this.hero.facingDirection = "RIGHT";
+    this.currentSkillAnimation.start();
   }
 
   resetSkillSelectionUI() {
@@ -647,6 +587,47 @@ export class BattleScene extends Level {
 
   emitSkillPointsChanged() {
     events.emit("SKILL_POINTS_CHANGED", { count: this.skillPoints });
+  }
+
+  handleEnemyDefeat() {
+    // Immediately stop any ongoing enemy actions
+    this.enemyIsAttacking = false;
+    if (this.enemySkillAnimation) {
+      this.enemySkillAnimation = null;
+    }
+
+    if (this.hero) {
+      // Award experience first
+      this.hero.gainExperience(this.baddy.experiencePoints);
+
+      // Show experience bar after experience is gained
+      if (this.hero.experienceBar) {
+        this.hero.experienceBar.visible = true;
+      }
+
+      this.showExperienceGain(this.baddy.experiencePoints);
+    }
+
+    // Clean up battle UI elements immediately when enemy is defeated
+    if (this.skillCross) {
+      this.skillCross.active = false;
+    }
+
+    // Mark battle as complete after a short delay to show experience animation
+    setTimeout(() => {
+      this.battleComplete = true;
+      events.emit("BATTLE_COMPLETE");
+    }, 2000); // 2 second delay
+  }
+
+  showExperienceGain(experiencePoints) {
+    // Create floating experience text above the hero
+    const experienceText = new FloatingCounterText({
+      text: `+${experiencePoints} XP`,
+      duration: 1500,
+      color: "#00FFFF" // Cyan color for experience
+    });
+    this.hero.addChild(experienceText);
   }
 }
  

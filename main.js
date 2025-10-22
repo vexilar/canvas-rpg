@@ -89,20 +89,26 @@ audio.loadClips({
   battleTheme: "/audio/fightchamp.wav",
 });
 
+// Global hero state that persists across level changes
+const globalHeroState = {
+  level: 1,
+  experience: 0,
+  experienceToNextLevel: 1000,
+  position: null // Will be set when transitioning levels
+};
+
 // Establish the root scene
-const mainScene = new Main({
-  position: new Vector2(0,0)
-})
+const mainScene = new Main(globalHeroState)
 //mainScene.setLevel(new OutdoorLevel1())
-//mainScene.setLevel(new CaveLevel1())
-mainScene.setLevel(new BattleScene({
-  originalLevel: "CaveLevel1",
-  baddyData: {
-    health: 100,
-    maxHealth: 100,
-    attackPower: 10
-  }
-}))
+mainScene.setLevel(new CaveLevel1({ globalHeroState }))
+// mainScene.setLevel(new BattleScene({
+//   originalLevel: "CaveLevel1",
+//   baddyData: {
+//     health: 100,
+//     maxHealth: 100,
+//     attackPower: 10
+//   }
+// }))
 
 // Create death screen
 const deathScreen = new DeathScreen();
@@ -110,8 +116,14 @@ const deathScreen = new DeathScreen();
 
 // Handle game reset
 events.on("RESET_GAME", mainScene, () => {
+  // Reset global hero state
+  globalHeroState.level = 1;
+  globalHeroState.experience = 0;
+  globalHeroState.experienceToNextLevel = 1000;
+  globalHeroState.position = null;
+
   // Completely recreate the level
-  mainScene.setLevel(new CaveLevel1());
+  mainScene.setLevel(new CaveLevel1({ globalHeroState }));
 });
 
 // Establish update and draw loops

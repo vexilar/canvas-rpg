@@ -43,7 +43,13 @@ export class Baddy extends GameObject {
     this.health = options.health || 100;
     this.maxHealth = options.maxHealth || 100;
     this.attackPower = options.attackPower || 15;
+    this.experiencePoints = options.experiencePoints || 50; // Experience points awarded when defeated
     this.isAlive = true;
+
+    // Fade out properties for death animation
+    this.opacity = 1.0; // Full opacity by default
+    this.fadeOutSpeed = 0.02; // How fast to fade out (per frame)
+    this.isFadingOut = false;
 
     // AI properties (for non-battle scenes)
     this.aggroRange = options.aggroRange ?? 120;
@@ -83,6 +89,33 @@ export class Baddy extends GameObject {
     }
   }
 
+  step(delta) {
+    // Handle fade out animation
+    if (this.isFadingOut) {
+      this.opacity -= this.fadeOutSpeed;
+      if (this.opacity <= 0) {
+        this.opacity = 0;
+        // Emit the defeat event once fully faded
+        events.emit("BADDY_DEFEATED", {
+          baddy: this,
+          experiencePoints: this.experiencePoints
+        });
+      }
+    }
+  }
+
+  draw(ctx, x, y) {
+    // Apply opacity for fade out effect
+    const previousAlpha = ctx.globalAlpha;
+    ctx.globalAlpha = this.opacity;
+
+    // Call parent draw method
+    super.draw(ctx, x, y);
+
+    // Restore previous alpha
+    ctx.globalAlpha = previousAlpha;
+  }
+
   checkHeroFacing(heroPosition) {
     // Simple check: if hero is close enough and facing this direction, allow interaction
     const distance = Math.sqrt(
@@ -113,8 +146,27 @@ export class Baddy extends GameObject {
   }
 
   onDeath() {
-    console.log("Baddy defeated!");
-    // Could emit an event here for battle completion
+    console.log("Baddy defeated! Starting fade out...");
+    // Start fade out animation instead of immediately emitting event
+    this.isFadingOut = true;
+    this.sprite.animations.play("standLeft"); // Keep standing animation during fade
+  }
+
+  step(delta) {
+    // Handle fade out animation
+    if (this.isFadingOut) {
+      this.opacity -= this.fadeOutSpeed;
+      // Keep standing animation during fade-out
+      this.sprite.animations.play("standLeft");
+      if (this.opacity <= 0) {
+        this.opacity = 0;
+        // Emit the defeat event once fully faded
+        events.emit("BADDY_DEFEATED", {
+          baddy: this,
+          experiencePoints: this.experiencePoints
+        });
+      }
+    }
   }
 
   attack(target) {

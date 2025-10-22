@@ -27,6 +27,11 @@ export class CaveLevel1 extends Level {
   constructor(params={}) {
     super({});
 
+    // Store battle result if returning from battle
+    this.battleResult = params.battleResult;
+    // Store global hero state
+    this.globalHeroState = params.globalHeroState;
+
     this.background = new Sprite({
       resource: resources.images.cave,
       frameSize: new Vector2(DESIGN_WIDTH, DESIGN_HEIGHT)
@@ -41,8 +46,28 @@ export class CaveLevel1 extends Level {
     const exit = new Exit(gridCells(3), gridCells(5))
     this.addChild(exit);
 
-    this.heroStartPosition = params.heroPosition ?? DEFAULT_HERO_POSITION;
+    this.heroStartPosition = params.heroPosition ?? this.globalHeroState?.position ?? DEFAULT_HERO_POSITION;
     const hero = new Hero(this.heroStartPosition.x, this.heroStartPosition.y);
+
+    // Restore hero experience/level from global state or battle result
+    const heroState = this.battleResult?.heroExperience || this.globalHeroState;
+    if (heroState) {
+      hero.level = heroState.level || 1;
+      hero.experience = heroState.experience || 0;
+      hero.experienceToNextLevel = heroState.experienceToNextLevel || 1000;
+      // Update experience bar
+      if (hero.experienceBar) {
+        hero.experienceBar.setExperience(hero.experience, hero.experienceToNextLevel);
+        // Hide experience bar in non-battle levels
+        hero.experienceBar.visible = false;
+      }
+    } else {
+      // Hide experience bar for fresh heroes in non-battle levels
+      if (hero.experienceBar) {
+        hero.experienceBar.visible = false;
+      }
+    }
+
     this.addChild(hero);
 
     this.fireballs = []
@@ -115,17 +140,27 @@ export class CaveLevel1 extends Level {
         this.fireballs.push(fireball)
     });
 
-    const baddy = new Baddy(20, 20, {
-      battleMode: false,
-      health: 100,
-      maxHealth: 100,
-      aggroRange: 0, // Disable chasing - player must run into baddy
-      moveSpeed: 0
-    });
+    // Only add baddy if it wasn't defeated in battle
+    const baddyPosition = new Vector2(20, 20);
+    const baddyDefeated = this.battleResult?.baddyDefeated &&
+                         this.battleResult?.baddyPosition &&
+                         this.battleResult.baddyPosition.x === baddyPosition.x &&
+                         this.battleResult.baddyPosition.y === baddyPosition.y;
 
-    this.addChild(baddy)
-    this.baddies = []
-    this.baddies.push(baddy)
+    this.baddies = [];
+    if (!baddyDefeated) {
+      const baddy = new Baddy(baddyPosition.x, baddyPosition.y, {
+        battleMode: false,
+        health: 100,
+        maxHealth: 100,
+        experiencePoints: 50, // Experience points awarded when defeated
+        aggroRange: 0, // Disable chasing - player must run into baddy
+        moveSpeed: 0
+      });
+
+      this.addChild(baddy);
+      this.baddies.push(baddy);
+    }
     
     // Store hero reference for AI tracking
     this.hero = hero;
@@ -184,17 +219,15 @@ export class CaveLevel1 extends Level {
   step(delta) {
     
     // Update baddy AI
-    if (this.baddies.length > 0) {
-      this.baddies.forEach(baddy => {
-        // Calculate hero center for AI tracking
-        const heroCenterX = this.hero.position.x + this.hero.body.position.x + this.hero.body.frameSize.x / 2;
-        const heroCenterY = this.hero.position.y + this.hero.body.position.y + this.hero.body.frameSize.y / 2;
-        const heroPosition = new Vector2(heroCenterX, heroCenterY);
-        
-        // Use the Baddy object's AI method
-        baddy.updateAI(heroPosition, delta);
-      });
-    }
+    this.baddies.forEach(baddy => {
+      // Calculate hero center for AI tracking
+      const heroCenterX = this.hero.position.x + this.hero.body.position.x + this.hero.body.frameSize.x / 2;
+      const heroCenterY = this.hero.position.y + this.hero.body.position.y + this.hero.body.frameSize.y / 2;
+      const heroPosition = new Vector2(heroCenterX, heroCenterY);
+
+      // Use the Baddy object's AI method
+      baddy.updateAI(heroPosition, delta);
+    });
 
     // Check for fireball-baddy collisions
     this.fireballs.forEach(fireball => {
@@ -243,25 +276,25 @@ export class CaveLevel1 extends Level {
       // Log hitbox bounds for debugging
       const baddyBounds = baddy.getHitboxBounds();
       const heroBounds = this.hero.body.getHitboxBounds();
-      
+
       //console.log("Baddy bounds:", baddyBounds);
       //console.log("Hero bounds:", heroBounds);
-      
+
       // Calculate hero's visual center
       const heroCenterX = this.hero.position.x + this.hero.body.position.x + this.hero.body.frameSize.x / 2;
       const heroCenterY = this.hero.position.y + this.hero.body.position.y + this.hero.body.frameSize.y / 2;
-      
+
       // Calculate baddy's visual center
       const baddyCenterX = baddy.position.x + baddy.sprite.frameSize.x / 2;
       const baddyCenterY = baddy.position.y + baddy.sprite.frameSize.y / 2;
-      
+
       // Calculate distance between baddy and hero's visual centers
       const distance = Math.sqrt(
-        Math.pow(baddyCenterX - heroCenterX, 2) + 
+        Math.pow(baddyCenterX - heroCenterX, 2) +
         Math.pow(baddyCenterY - heroCenterY, 2)
       );
       //console.log("Distance between baddy and hero:", distance);
-      
+
       // Check collision using distance-based detection instead of hitbox
       const collisionDistance = 12; // Collision radius (reduced from 20)
       if (distance <= collisionDistance) {
@@ -283,7 +316,8 @@ export class CaveLevel1 extends Level {
           health: baddy.health,
           maxHealth: baddy.maxHealth,
           attackPower: baddy.attackPower
-        }
+        },
+        globalHeroState: this.globalHeroState
       }));
     });
   }
@@ -291,7 +325,8 @@ export class CaveLevel1 extends Level {
   ready() {
     events.on("HERO_EXITS", this, () => {
       events.emit("CHANGE_LEVEL", new OutdoorLevel1({
-        heroPosition: new Vector2(gridCells(16), gridCells(4))
+        heroPosition: new Vector2(gridCells(16), gridCells(4)),
+        globalHeroState: this.globalHeroState
       }))
     })
   }

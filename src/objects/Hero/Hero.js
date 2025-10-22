@@ -7,6 +7,7 @@ import {resources} from "../../Resource.js";
 import {Animations} from "../../Animations.js";
 import {FrameIndexPattern} from "../../FrameIndexPattern.js";
 import {HealthBar} from "../../HealthBar.js";
+import {ExperienceBar} from "../../ExperienceBar.js";
 import {
   PICK_UP_DOWN,
   STAND_DOWN,
@@ -69,6 +70,11 @@ export class Hero extends GameObject {
     this.health = 100;
     this.maxHealth = 100;
     this.isInvulnerable = false; // For damage cooldown
+
+    // Experience and leveling system
+    this.level = 1;
+    this.experience = 0;
+    this.experienceToNextLevel = 1000; // Experience needed for level 2
     this.invulnerabilityTime = 0; // Time remaining invulnerable
     this.isKnockbacked = false; // For knockback state
     this.knockbackTime = 0; // Time remaining in knockback
@@ -80,6 +86,11 @@ export class Hero extends GameObject {
     const healthBar = new HealthBar(100, 10, -20);
     this.addChild(healthBar);
     this.healthBar = healthBar;
+
+    // Add experience bar below health bar
+    const experienceBar = new ExperienceBar(100, 10, -15);
+    this.addChild(experienceBar);
+    this.experienceBar = experienceBar;
 
     this.facingDirection = DOWN;
     this.destinationPosition = this.position.duplicate();
@@ -287,18 +298,52 @@ export class Hero extends GameObject {
 
   }
 
+  gainExperience(amount) {
+    this.experience += amount;
+    console.log(`Hero gained ${amount} experience! Total: ${this.experience}`);
+
+    // Check for level up
+    while (this.experience >= this.experienceToNextLevel) {
+      this.levelUp();
+    }
+
+    // Update experience bar only once after all level ups are complete
+    if (this.experienceBar) {
+      this.experienceBar.setExperience(this.experience, this.experienceToNextLevel);
+    }
+
+    // Emit event for UI updates
+    events.emit("HERO_EXPERIENCE_CHANGED", {
+      experience: this.experience,
+      experienceToNextLevel: this.experienceToNextLevel,
+      level: this.level
+    });
+  }
+
+  levelUp() {
+    const excessExperience = this.experience - this.experienceToNextLevel;
+    this.experience = excessExperience;
+    this.level += 1;
+
+    // Increase experience needed for next level (simple scaling)
+    this.experienceToNextLevel = Math.floor(this.experienceToNextLevel * 1.5);
+
+    console.log(`Hero leveled up to level ${this.level}!`);
+    events.emit("HERO_LEVEL_UP", { level: this.level });
+  }
+
   takeDamage(amount, attackerPosition = null, returnToPosition = null) {
     if (this.isInvulnerable) {
       return; // Can't take damage while invulnerable
     }
-    
+
     // Play hit/slash sound
     audio.playSlash(0.45);
     audio.playClip("heroHit", { volume: 0.7, delaySec: 0.0 });
 
     this.health = Math.max(0, this.health - amount);
     console.log("Hero took damage! Health:", this.health);
-    
+
     // Update health bar
     if (this.healthBar) {
       this.healthBar.setHealth(this.health);
@@ -306,13 +351,13 @@ export class Hero extends GameObject {
       const hb = this.children.find(child => child instanceof HealthBar);
       hb?.setHealth(this.health);
     }
-    
+
     // Calculate knockback direction if attacker position is provided
     if (attackerPosition) {
       // Calculate direction from attacker to hero
       const dx = this.position.x - attackerPosition.x;
       const dy = this.position.y - attackerPosition.y;
-      
+
       // Normalize the direction vector
       const distance = Math.sqrt(dx * dx + dy * dy);
       if (distance > 0) {
@@ -323,17 +368,17 @@ export class Hero extends GameObject {
         this.isReturningFromKnockback = false;
         this.knockbackVector.x = (dx / distance) * knockbackSpeed;
         this.knockbackVector.y = (dy / distance) * knockbackSpeed;
-        
+
         // Set knockback duration
         this.isKnockbacked = true;
         this.knockbackTime = 300; // 300ms knockback duration
       }
     }
-    
+
     // Set invulnerability for 1 second (1000ms)
     this.isInvulnerable = true;
     this.invulnerabilityTime = 1000;
-    
+
     if (this.health <= 0) {
       console.log("Hero defeated!");
       events.emit("HERO_DIED");

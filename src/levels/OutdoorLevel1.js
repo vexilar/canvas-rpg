@@ -16,6 +16,12 @@ const DEFAULT_HERO_POSITION = new Vector2(gridCells(6),gridCells(5))
 export class OutdoorLevel1 extends Level {
   constructor(params={}) {
     super({});
+
+    // Store battle result if returning from battle
+    this.battleResult = params.battleResult;
+    // Store global hero state
+    this.globalHeroState = params.globalHeroState;
+
     this.background = new Sprite({
       resource: resources.images.sky,
       frameSize: new Vector2(DESIGN_WIDTH, DESIGN_HEIGHT)
@@ -30,25 +36,53 @@ export class OutdoorLevel1 extends Level {
     const exit = new Exit(gridCells(6), gridCells(3))
     this.addChild(exit);
 
-    this.heroStartPosition = params.heroPosition ?? DEFAULT_HERO_POSITION;
-    const hero = new Hero(this.heroStartPosition.x, this.heroStartPosition.y)
+    this.heroStartPosition = params.heroPosition ?? this.globalHeroState?.position ?? DEFAULT_HERO_POSITION;
+    const hero = new Hero(this.heroStartPosition.x, this.heroStartPosition.y);
+
+    // Restore hero experience/level from global state or battle result
+    const heroState = this.battleResult?.heroExperience || this.globalHeroState;
+    if (heroState) {
+      hero.level = heroState.level || 1;
+      hero.experience = heroState.experience || 0;
+      hero.experienceToNextLevel = heroState.experienceToNextLevel || 1000;
+      // Update experience bar
+      if (hero.experienceBar) {
+        hero.experienceBar.setExperience(hero.experience, hero.experienceToNextLevel);
+        // Hide experience bar in non-battle levels
+        hero.experienceBar.visible = false;
+      }
+    } else {
+      // Hide experience bar for fresh heroes in non-battle levels
+      if (hero.experienceBar) {
+        hero.experienceBar.visible = false;
+      }
+    }
+
     this.addChild(hero);
 
     const rod = new Rod(gridCells(7), gridCells(6))
     this.addChild(rod);
 
-    // Create a battle-triggering baddy
-    const battleBaddy = new Baddy(gridCells(12), gridCells(5), {
-      battleMode: false,
-      health: 90,
-      maxHealth: 90,
-      attackPower: 15,
-      aggroRange: 0, // Disable chasing - player must run into baddy
-      moveSpeed: 0
-    });
-    this.addChild(battleBaddy);
+    // Only add baddy if it wasn't defeated in battle
+    const baddyPosition = new Vector2(gridCells(12), gridCells(5));
+    const baddyDefeated = this.battleResult?.baddyDefeated &&
+                         this.battleResult?.baddyPosition &&
+                         this.battleResult.baddyPosition.x === baddyPosition.x &&
+                         this.battleResult.baddyPosition.y === baddyPosition.y;
+
     this.baddies = [];
-    this.baddies.push(battleBaddy);
+    if (!baddyDefeated) {
+      const battleBaddy = new Baddy(baddyPosition.x, baddyPosition.y, {
+        battleMode: false,
+        health: 90,
+        maxHealth: 90,
+        attackPower: 15,
+        aggroRange: 0, // Disable chasing - player must run into baddy
+        moveSpeed: 0
+      });
+      this.addChild(battleBaddy);
+      this.baddies.push(battleBaddy);
+    }
 
     this.walls = new Set();
     this.walls.add(`64,48`); // tree
@@ -104,7 +138,8 @@ export class OutdoorLevel1 extends Level {
           health: baddy.health,
           maxHealth: baddy.maxHealth,
           attackPower: baddy.attackPower
-        }
+        },
+        globalHeroState: this.globalHeroState
       }));
     });
   }
@@ -112,7 +147,8 @@ export class OutdoorLevel1 extends Level {
   ready() {
     events.on("HERO_EXITS", this, () => {
       events.emit("CHANGE_LEVEL", new CaveLevel1({
-        heroPosition: new Vector2(gridCells(3), gridCells(6))
+        heroPosition: new Vector2(gridCells(3), gridCells(6)),
+        globalHeroState: this.globalHeroState
       }))
     })
   }

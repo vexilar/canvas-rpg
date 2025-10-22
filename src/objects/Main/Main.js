@@ -7,11 +7,12 @@ import {SpriteTextString} from "../SpriteTextString/SpriteTextString.js";
 import {storyFlags} from "../../StoryFlags.js";
 
 export class Main extends GameObject {
-  constructor() {
+  constructor(globalHeroState) {
     super({});
     this.level = null;
     this.input = new Input()
     this.camera = new Camera()
+    this.globalHeroState = globalHeroState;
     this.addChild(this.camera); // Add camera so its step method gets called
   }
 
@@ -22,6 +23,19 @@ export class Main extends GameObject {
 
     // Change Level handler
     events.on("CHANGE_LEVEL", this, newLevelInstance => {
+      // Save current hero state before changing levels
+      if (this.level && this.level.hero) {
+        this.globalHeroState.level = this.level.hero.level;
+        this.globalHeroState.experience = this.level.hero.experience;
+        this.globalHeroState.experienceToNextLevel = this.level.hero.experienceToNextLevel;
+        this.globalHeroState.position = this.level.hero.position.duplicate();
+      }
+
+      // Add global hero state to the new level instance
+      if (newLevelInstance && typeof newLevelInstance === 'object') {
+        newLevelInstance.globalHeroState = this.globalHeroState;
+      }
+
       this.setLevel(newLevelInstance)
     })
 
