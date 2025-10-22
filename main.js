@@ -3,13 +3,15 @@ import {Vector2} from "./src/Vector2.js";
 import {GameLoop} from "./src/GameLoop.js";
 import {Main} from "./src/objects/Main/Main.js";
 import {CaveLevel1} from "./src/levels/CaveLevel1.js";
+import {OutdoorLevel1} from "./src/levels/OutdoorLevel1.js";
 import {BattleScene} from "./src/levels/BattleScene.js";
 import {DeathScreen} from "./src/DeathScreen.js";
 import {canvas} from "./src/Canvas.js"
-import {DESIGN_WIDTH, DESIGN_HEIGHT} from "./src/helpers/grid.js"
+import {DESIGN_WIDTH, DESIGN_HEIGHT, gridCells} from "./src/helpers/grid.js"
 import {resources} from "./src/Resource.js"
 import {events} from "./src/Events.js"
 import {audio} from "./src/Audio.js"
+import {HeroProgression} from "./src/HeroProgression.js"
 
 // Grabbing the canvas to draw to
 
@@ -89,18 +91,17 @@ audio.loadClips({
   battleTheme: "/audio/fightchamp.wav",
 });
 
-// Global hero state that persists across level changes
-const globalHeroState = {
-  level: 1,
-  experience: 0,
-  experienceToNextLevel: 1000,
-  position: null // Will be set when transitioning levels
-};
+// Global hero progression that persists across level changes
+const heroProgression = new HeroProgression(1, 0);
 
-// Establish the root scene
-const mainScene = new Main(globalHeroState)
-//mainScene.setLevel(new OutdoorLevel1())
-mainScene.setLevel(new CaveLevel1({ globalHeroState }))
+// Initial hero position
+const initialHeroPosition = new Vector2(gridCells(6), gridCells(5));
+
+// Establish the root scene with hero
+const mainScene = new Main(heroProgression, initialHeroPosition)
+
+// Set initial level
+mainScene.setLevel(new OutdoorLevel1())
 // mainScene.setLevel(new BattleScene({
 //   originalLevel: "CaveLevel1",
 //   baddyData: {
@@ -116,14 +117,26 @@ const deathScreen = new DeathScreen();
 
 // Handle game reset
 events.on("RESET_GAME", mainScene, () => {
-  // Reset global hero state
-  globalHeroState.level = 1;
-  globalHeroState.experience = 0;
-  globalHeroState.experienceToNextLevel = 1000;
-  globalHeroState.position = null;
+  // Reset hero progression
+  heroProgression.reset();
+  
+  // Reset hero position
+  mainScene.hero.position.x = initialHeroPosition.x;
+  mainScene.hero.position.y = initialHeroPosition.y;
+  mainScene.hero.destinationPosition.x = initialHeroPosition.x;
+  mainScene.hero.destinationPosition.y = initialHeroPosition.y;
+  
+  // Reset hero health
+  mainScene.hero.health = mainScene.hero.maxHealth;
+  if (mainScene.hero.healthBar) {
+    mainScene.hero.healthBar.setHealth(mainScene.hero.health);
+  }
+  
+  // Reset enemy manager
+  mainScene.enemyManager.reset();
 
   // Completely recreate the level
-  mainScene.setLevel(new CaveLevel1({ globalHeroState }));
+  mainScene.setLevel(new CaveLevel1());
 });
 
 // Establish update and draw loops

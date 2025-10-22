@@ -55,6 +55,14 @@ export class GameObject {
         return 1;
       }
 
+      // Ensure overlay layers render last
+      if (a.drawLayer === "OVERLAY" && b.drawLayer !== "OVERLAY") {
+        return 1;
+      }
+      if (b.drawLayer === "OVERLAY" && a.drawLayer !== "OVERLAY") {
+        return -1;
+      }
+
       return a.position.y > b.position.y ? 1 : -1
     })
   }

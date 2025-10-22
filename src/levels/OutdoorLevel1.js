@@ -10,146 +10,157 @@ import {Npc} from "../objects/Npc/Npc.js";
 import {Baddy} from "../objects/Baddy/Baddy.js";
 import {events} from "../Events.js";
 import {CaveLevel1} from "./CaveLevel1.js";
-
-const DEFAULT_HERO_POSITION = new Vector2(gridCells(6),gridCells(5))
+import {Tilemap} from "../tilemap/Tilemap.js";
+import {loadTiledMap} from "../tilemap/TiledLoader.js";
 
 export class OutdoorLevel1 extends Level {
   constructor(params={}) {
     super({});
-
-    // Store battle result if returning from battle
-    this.battleResult = params.battleResult;
-    // Store global hero state
-    this.globalHeroState = params.globalHeroState;
 
     this.background = new Sprite({
       resource: resources.images.sky,
       frameSize: new Vector2(DESIGN_WIDTH, DESIGN_HEIGHT)
     })
 
-    const groundSprite = new Sprite({
-      resource: resources.images.ground,
-      frameSize: new Vector2(DESIGN_WIDTH, DESIGN_HEIGHT)
-    })
-    this.addChild(groundSprite);
-
-    const exit = new Exit(gridCells(6), gridCells(3))
-    this.addChild(exit);
-
-    this.heroStartPosition = params.heroPosition ?? this.globalHeroState?.position ?? DEFAULT_HERO_POSITION;
-    const hero = new Hero(this.heroStartPosition.x, this.heroStartPosition.y);
-
-    // Restore hero experience/level from global state or battle result
-    const heroState = this.battleResult?.heroExperience || this.globalHeroState;
-    if (heroState) {
-      hero.level = heroState.level || 1;
-      hero.experience = heroState.experience || 0;
-      hero.experienceToNextLevel = heroState.experienceToNextLevel || 1000;
-      // Update experience bar
-      if (hero.experienceBar) {
-        hero.experienceBar.setExperience(hero.experience, hero.experienceToNextLevel);
-        // Hide experience bar in non-battle levels
-        hero.experienceBar.visible = false;
-      }
-    } else {
-      // Hide experience bar for fresh heroes in non-battle levels
-      if (hero.experienceBar) {
-        hero.experienceBar.visible = false;
-      }
-    }
-
-    this.addChild(hero);
-
-    const rod = new Rod(gridCells(7), gridCells(6))
-    this.addChild(rod);
-
-    // Only add baddy if it wasn't defeated in battle
-    const baddyPosition = new Vector2(gridCells(12), gridCells(5));
-    const baddyDefeated = this.battleResult?.baddyDefeated &&
-                         this.battleResult?.baddyPosition &&
-                         this.battleResult.baddyPosition.x === baddyPosition.x &&
-                         this.battleResult.baddyPosition.y === baddyPosition.y;
-
-    this.baddies = [];
-    if (!baddyDefeated) {
-      const battleBaddy = new Baddy(baddyPosition.x, baddyPosition.y, {
-        battleMode: false,
-        health: 90,
-        maxHealth: 90,
-        attackPower: 15,
-        aggroRange: 0, // Disable chasing - player must run into baddy
-        moveSpeed: 0
-      });
-      this.addChild(battleBaddy);
-      this.baddies.push(battleBaddy);
-    }
-
+    // Tilemap-driven content will be added in ready()
     this.walls = new Set();
-    this.walls.add(`64,48`); // tree
-    this.walls.add(`64,64`); // squares
-    this.walls.add(`64,80`);
-    this.walls.add(`80,64`);
-    this.walls.add(`80,80`);
-    this.walls.add(`112,80`); // water
-    this.walls.add(`128,80`);
-    this.walls.add(`144,80`);
-    this.walls.add(`160,80`);
-    
-    // Store hero reference for collision detection
-    this.hero = hero;
+  }
+
+  ready() {
+    // Load tilemap asynchronously
+    loadTiledMap("/maps/testmap.tmj").then(map => {
+      // Build tile layers (allow multiple)
+      const floorDatas = map.floorLayers?.length ? map.floorLayers : (map.floorData ? [map.floorData] : []);
+      floorDatas.forEach(data => {
+        const floor = new Tilemap({
+          tileSize: map.tileSize,
+          width: map.width,
+          height: map.height,
+          tilesetImage: map.image,
+          tilesetCols: map.tilesetCols,
+          data,
+          drawLayer: "FLOOR"
+        });
+        this.addChild(floor);
+      });
+
+      const overlayDatas = map.overlayLayers?.length ? map.overlayLayers : (map.overlayData ? [map.overlayData] : []);
+      overlayDatas.forEach(data => {
+        const overlay = new Tilemap({
+          tileSize: map.tileSize,
+          width: map.width,
+          height: map.height,
+          tilesetImage: map.image,
+          tilesetCols: map.tilesetCols,
+          data,
+          drawLayer: "OVERLAY"
+        });
+        this.addChild(overlay);
+      });
+
+      // Walls from collision layer
+      this.walls = map.walls ?? new Set();
+
+      // Objects from object layers (optional): place simple examples by name/type
+      map.objects?.forEach(obj => {
+        const x = Math.round(obj.x);
+        const y = Math.round(obj.y - map.tileSize);
+        if (obj.type === "Exit") {
+          const exit = new Exit(x, y);
+          this.addChild(exit);
+        }
+        if (obj.type === "Rod") {
+          const rod = new Rod(x, y);
+          this.addChild(rod);
+        }
+        if (obj.type === "Npc") {
+          const npc = new Npc(x, y);
+          this.addChild(npc);
+        }
+        if (obj.type === "Enemy") {
+          const key = obj.name || `enemy_${x}_${y}`;
+          const baddy = this.enemyManager?.spawnEnemy(key, x, y, {});
+          if (baddy) this.addChild(baddy);
+        }
+      });
+    });
+    // Hero and enemy manager are provided by Main
+    // Add hero to the scene
+    if (this.hero) {
+      // Always remove first in case it's somehow already there
+      const heroIndex = this.children.indexOf(this.hero);
+      if (heroIndex !== -1) {
+        this.children.splice(heroIndex, 1);
+      }
+      
+      // Now add the hero
+      this.addChild(this.hero);
+      
+      // Hide experience bar in non-battle levels
+      if (this.hero.experienceBar) {
+        this.hero.experienceBar.visible = false;
+      }
+      
+      console.log("OutdoorLevel1: Hero added to scene at", this.hero.position.x, this.hero.position.y);
+    }
+
+    // Enemies now come from tilemap (if any)
+
+    events.on("HERO_EXITS", this, () => {
+      events.emit("CHANGE_LEVEL", {
+        level: new CaveLevel1(),
+        heroPosition: new Vector2(gridCells(3), gridCells(6))
+      })
+    })
   }
 
   step(delta) {
-    // Update baddy AI
-    if (this.baddies && this.baddies.length > 0) {
-      this.baddies.forEach(baddy => {
-        // Calculate hero center for AI tracking
-        const heroCenterX = this.hero.position.x + this.hero.body.position.x + this.hero.body.frameSize.x / 2;
-        const heroCenterY = this.hero.position.y + this.hero.body.position.y + this.hero.body.frameSize.y / 2;
-        const heroPosition = new Vector2(heroCenterX, heroCenterY);
-        
-        // Use the Baddy object's AI method
-        baddy.updateAI(heroPosition, delta);
-        
-        // Check for collision with hero
-        const baddyCenterX = baddy.position.x + baddy.sprite.frameSize.x / 2;
-        const baddyCenterY = baddy.position.y + baddy.sprite.frameSize.y / 2;
-        
-        const distance = Math.sqrt(
-          Math.pow(baddyCenterX - heroCenterX, 2) + 
-          Math.pow(baddyCenterY - heroCenterY, 2)
-        );
-        
-        const collisionDistance = 12;
-        if (distance <= collisionDistance) {
-          console.log("Hero collided with baddy in outdoor level! Starting battle...");
-          this.triggerBattleWithBaddy(baddy);
-        }
-      });
-    }
+    if (!this.hero || !this.enemyManager) return;
+
+    const enemies = this.enemyManager.getEnemies();
+    
+    // Update enemy AI and check for collisions
+    enemies.forEach(baddy => {
+      // Calculate hero center for AI tracking
+      const heroCenterX = this.hero.position.x + this.hero.body.position.x + this.hero.body.frameSize.x / 2;
+      const heroCenterY = this.hero.position.y + this.hero.body.position.y + this.hero.body.frameSize.y / 2;
+      const heroPosition = new Vector2(heroCenterX, heroCenterY);
+      
+      // Use the Baddy object's AI method
+      baddy.updateAI(heroPosition, delta);
+      
+      // Check for collision with hero
+      const baddyCenterX = baddy.position.x + baddy.sprite.frameSize.x / 2;
+      const baddyCenterY = baddy.position.y + baddy.sprite.frameSize.y / 2;
+      
+      const distance = Math.sqrt(
+        Math.pow(baddyCenterX - heroCenterX, 2) + 
+        Math.pow(baddyCenterY - heroCenterY, 2)
+      );
+      
+      const collisionDistance = 12;
+      if (distance <= collisionDistance) {
+        console.log("Hero collided with baddy in outdoor level! Starting battle...");
+        this.triggerBattleWithBaddy(baddy);
+      }
+    });
   }
 
   triggerBattleWithBaddy(baddy) {
     // Import BattleScene dynamically to avoid circular dependencies
     import("./BattleScene.js").then(({BattleScene}) => {
-      events.emit("CHANGE_LEVEL", new BattleScene({
-        originalLevel: "OutdoorLevel1",
-        baddyData: {
-          health: baddy.health,
-          maxHealth: baddy.maxHealth,
-          attackPower: baddy.attackPower
-        },
-        globalHeroState: this.globalHeroState
-      }));
+      events.emit("CHANGE_LEVEL", {
+        level: new BattleScene({
+          originalLevel: "OutdoorLevel1",
+          enemyKey: baddy.enemyKey,
+          baddyData: {
+            health: baddy.health,
+            maxHealth: baddy.maxHealth,
+            attackPower: baddy.attackPower
+          }
+        }),
+        heroPosition: null // Keep hero at current position
+      });
     });
-  }
-
-  ready() {
-    events.on("HERO_EXITS", this, () => {
-      events.emit("CHANGE_LEVEL", new CaveLevel1({
-        heroPosition: new Vector2(gridCells(3), gridCells(6)),
-        globalHeroState: this.globalHeroState
-      }))
-    })
   }
 }

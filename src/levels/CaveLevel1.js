@@ -21,16 +21,9 @@ import {FrameIndexPattern} from "../FrameIndexPattern.js";
 import {ExplosionSprite} from "../ExplosionSprite.js";
 import {HealthBar} from "../HealthBar.js";
 
-const DEFAULT_HERO_POSITION = new Vector2(gridCells(6), gridCells(5))
-
 export class CaveLevel1 extends Level {
   constructor(params={}) {
     super({});
-
-    // Store battle result if returning from battle
-    this.battleResult = params.battleResult;
-    // Store global hero state
-    this.globalHeroState = params.globalHeroState;
 
     this.background = new Sprite({
       resource: resources.images.cave,
@@ -45,134 +38,6 @@ export class CaveLevel1 extends Level {
 
     const exit = new Exit(gridCells(3), gridCells(5))
     this.addChild(exit);
-
-    this.heroStartPosition = params.heroPosition ?? this.globalHeroState?.position ?? DEFAULT_HERO_POSITION;
-    const hero = new Hero(this.heroStartPosition.x, this.heroStartPosition.y);
-
-    // Restore hero experience/level from global state or battle result
-    const heroState = this.battleResult?.heroExperience || this.globalHeroState;
-    if (heroState) {
-      hero.level = heroState.level || 1;
-      hero.experience = heroState.experience || 0;
-      hero.experienceToNextLevel = heroState.experienceToNextLevel || 1000;
-      // Update experience bar
-      if (hero.experienceBar) {
-        hero.experienceBar.setExperience(hero.experience, hero.experienceToNextLevel);
-        // Hide experience bar in non-battle levels
-        hero.experienceBar.visible = false;
-      }
-    } else {
-      // Hide experience bar for fresh heroes in non-battle levels
-      if (hero.experienceBar) {
-        hero.experienceBar.visible = false;
-      }
-    }
-
-    this.addChild(hero);
-
-    this.fireballs = []
-
-    const cleanupOldFireballs = () => {
-      this.fireballs.forEach(f => {
-        const now = new Date();
-        const creationDate = new Date(f.creationTime.getTime());
-        const creationDatePlus = new Date(creationDate.setSeconds(creationDate.getSeconds() + 1));
-
-        if (now > creationDatePlus){
-          this.removeChild(f);
-          this.fireballs.splice(this.fireballs.indexOf(f), 1);         
-        }
-      })
-    }
-
-    const getMousePos = (canvas, evt) => {
-      var rect = canvas.getBoundingClientRect();
-      return {
-        x: evt.clientX - rect.left,
-        y: evt.clientY - rect.top
-      };
-    }
-
-    const getFireballVector = (mousePos) => {
-      const halfX = canvas.scrollWidth / 2;
-      const halfY = canvas.scrollHeight / 2;
-      const diffX = mousePos.x - halfX;
-      const diffY = mousePos.y - halfY;
-      const magnitude = Math.sqrt(diffX * diffX + diffY * diffY);
-
-      // Normalize the vector to ensure consistent speed
-      const vector = new Vector2(diffX / magnitude, diffY / magnitude);
-
-      return vector;
-    }
-
-    const moveFireballs = () => {
-      this.fireballs.forEach(f => {
-        f.position = new Vector2(f.position.x + f.vector.x, f.position.y + f.vector.y);
-      })
-    }
-
-    document.addEventListener("click", (evt) => {
-      var mousePos = getMousePos(canvas, evt);
-
-      const fireball = new Sprite({
-          resource: resources.images.fireball,
-          frameSize: new Vector2(200, 200),
-          scale: .1,
-          position: hero.position.duplicate(),
-          drawLayer: 0, // this doesnt seem to do much, TODO: figure out how to make it work the way i want it
-          hitbox: {
-            x: 0,
-            y: 0,
-            width: 12, // Reduced from 20 for tighter collision
-            height: 12
-          }
-        })
-        fireball.creationTime = new Date();
-        fireball.vector = getFireballVector(mousePos);
-
-        fireball.step = () => {
-          cleanupOldFireballs();
-          moveFireballs();
-        }
-
-        this.addChild(fireball)
-        this.fireballs.push(fireball)
-    });
-
-    // Only add baddy if it wasn't defeated in battle
-    const baddyPosition = new Vector2(20, 20);
-    const baddyDefeated = this.battleResult?.baddyDefeated &&
-                         this.battleResult?.baddyPosition &&
-                         this.battleResult.baddyPosition.x === baddyPosition.x &&
-                         this.battleResult.baddyPosition.y === baddyPosition.y;
-
-    this.baddies = [];
-    if (!baddyDefeated) {
-      const baddy = new Baddy(baddyPosition.x, baddyPosition.y, {
-        battleMode: false,
-        health: 100,
-        maxHealth: 100,
-        experiencePoints: 50, // Experience points awarded when defeated
-        aggroRange: 0, // Disable chasing - player must run into baddy
-        moveSpeed: 0
-      });
-
-      this.addChild(baddy);
-      this.baddies.push(baddy);
-    }
-    
-    // Store hero reference for AI tracking
-    this.hero = hero;
-
-    // Example of how to use a GIF sprite:
-    // const animatedSprite = new Sprite({
-    //   resource: resources.gifs.animatedFireball, // Use gifs instead of images
-    //   frameSize: new Vector2(64, 64),
-    //   position: new Vector2(100, 100),
-    //   scale: 1
-    // });
-    // this.addChild(animatedSprite);
 
     const rod = new Rod(gridCells(9), gridCells(6))
     this.addChild(rod)
@@ -211,78 +76,76 @@ export class CaveLevel1 extends Level {
     })
     this.addChild(npc2);
 
-    // Note: Battle is now triggered by colliding with the baddy above
-
     this.walls = new Set();
   }
 
+  ready() {
+    // Hero and enemy manager are provided by Main
+    // Add hero to the scene
+    if (this.hero) {
+      // Always remove first in case it's somehow already there
+      const heroIndex = this.children.indexOf(this.hero);
+      if (heroIndex !== -1) {
+        this.children.splice(heroIndex, 1);
+      }
+      
+      // Now add the hero
+      this.addChild(this.hero);
+      
+      // Hide experience bar in non-battle levels
+      if (this.hero.experienceBar) {
+        this.hero.experienceBar.visible = false;
+      }
+      
+      console.log("CaveLevel1: Hero added to scene at", this.hero.position.x, this.hero.position.y);
+    }
+
+    // Spawn enemies using enemy manager
+    if (this.enemyManager) {
+      // Clear any previous enemies
+      this.enemyManager.clearEnemies();
+      
+      // Spawn cave baddy at specific position
+      const baddy = this.enemyManager.spawnEnemy(
+        "cave_baddy_1", // unique key
+        20, 20, // position
+        {
+          health: 100,
+          maxHealth: 100,
+          attackPower: 10,
+          experiencePoints: 50,
+          aggroRange: 0,
+          moveSpeed: 0
+        }
+      );
+      
+      if (baddy) {
+        this.addChild(baddy);
+      }
+    }
+
+    events.on("HERO_EXITS", this, () => {
+      events.emit("CHANGE_LEVEL", {
+        level: new OutdoorLevel1(),
+        heroPosition: new Vector2(gridCells(16), gridCells(4))
+      })
+    })
+  }
+
   step(delta) {
+    if (!this.hero || !this.enemyManager) return;
+
+    const enemies = this.enemyManager.getEnemies();
     
-    // Update baddy AI
-    this.baddies.forEach(baddy => {
-      // Calculate hero center for AI tracking
+    // Update enemy AI and check for collisions
+    enemies.forEach(baddy => {
+      // Calculate hero center for AI tracking and collision
       const heroCenterX = this.hero.position.x + this.hero.body.position.x + this.hero.body.frameSize.x / 2;
       const heroCenterY = this.hero.position.y + this.hero.body.position.y + this.hero.body.frameSize.y / 2;
       const heroPosition = new Vector2(heroCenterX, heroCenterY);
 
       // Use the Baddy object's AI method
       baddy.updateAI(heroPosition, delta);
-    });
-
-    // Check for fireball-baddy collisions
-    this.fireballs.forEach(fireball => {
-      this.baddies.forEach(baddy => {
-        if (fireball.collidesWith(baddy.sprite)) {
-          // Handle collision
-          //console.log("Fireball hit baddy!");
-          
-          // Create explosion at a blend between fireball collision point and baddy center
-          const fireballCenterX = fireball.position.x + fireball.hitbox.width / 2;
-          const fireballCenterY = fireball.position.y + fireball.hitbox.height / 2;
-          const baddyCenterX = baddy.position.x + baddy.frameSize.x / 2;
-          const baddyCenterY = baddy.position.y + baddy.frameSize.y / 2;
-          
-          // Blend the positions (60% towards baddy center, 40% from fireball position)
-          const explosionX = fireballCenterX * 0.4 + baddyCenterX * 0.6;
-          const explosionY = fireballCenterY * 0.4 + baddyCenterY * 0.6;
-          
-          const explosionPosition = new Vector2(
-            explosionX - 16, // Center the explosion
-            explosionY - 16
-          );
-          const explosion = new ExplosionSprite(explosionPosition);
-          this.addChild(explosion);
-          
-          // Remove the fireball
-          this.removeChild(fireball);
-          this.fireballs.splice(this.fireballs.indexOf(fireball), 1);
-          
-          // Damage the baddy using the new Baddy object's method
-          baddy.takeDamage(25); // 25 damage per hit
-          console.log("Baddy health:", baddy.health);
-          
-          if (!baddy.isAlive) {
-            // Remove the baddy when health reaches zero
-            this.removeChild(baddy);
-            this.baddies.splice(this.baddies.indexOf(baddy), 1);
-            console.log("Baddy destroyed!");
-          }
-        }
-      });
-    });
-
-    // Check for baddy-hero collisions
-    this.baddies.forEach(baddy => {
-      // Log hitbox bounds for debugging
-      const baddyBounds = baddy.getHitboxBounds();
-      const heroBounds = this.hero.body.getHitboxBounds();
-
-      //console.log("Baddy bounds:", baddyBounds);
-      //console.log("Hero bounds:", heroBounds);
-
-      // Calculate hero's visual center
-      const heroCenterX = this.hero.position.x + this.hero.body.position.x + this.hero.body.frameSize.x / 2;
-      const heroCenterY = this.hero.position.y + this.hero.body.position.y + this.hero.body.frameSize.y / 2;
 
       // Calculate baddy's visual center
       const baddyCenterX = baddy.position.x + baddy.sprite.frameSize.x / 2;
@@ -293,16 +156,13 @@ export class CaveLevel1 extends Level {
         Math.pow(baddyCenterX - heroCenterX, 2) +
         Math.pow(baddyCenterY - heroCenterY, 2)
       );
-      //console.log("Distance between baddy and hero:", distance);
 
-      // Check collision using distance-based detection instead of hitbox
-      const collisionDistance = 12; // Collision radius (reduced from 20)
+      // Check collision using distance-based detection
+      const collisionDistance = 12;
       if (distance <= collisionDistance) {
-        // Trigger battle instead of taking damage
+        // Trigger battle
         console.log("Hero collided with baddy! Starting battle...");
         this.triggerBattleWithBaddy(baddy);
-      } else {
-        //console.log("No collision detected");
       }
     });
   }
@@ -310,25 +170,19 @@ export class CaveLevel1 extends Level {
   triggerBattleWithBaddy(baddy) {
     // Import BattleScene dynamically to avoid circular dependencies
     import("./BattleScene.js").then(({BattleScene}) => {
-      events.emit("CHANGE_LEVEL", new BattleScene({
-        originalLevel: "CaveLevel1",
-        baddyData: {
-          health: baddy.health,
-          maxHealth: baddy.maxHealth,
-          attackPower: baddy.attackPower
-        },
-        globalHeroState: this.globalHeroState
-      }));
+      events.emit("CHANGE_LEVEL", {
+        level: new BattleScene({
+          originalLevel: "CaveLevel1",
+          enemyKey: baddy.enemyKey,
+          baddyData: {
+            health: baddy.health,
+            maxHealth: baddy.maxHealth,
+            attackPower: baddy.attackPower
+          }
+        }),
+        heroPosition: null // Keep hero at current position
+      });
     });
-  }
-
-  ready() {
-    events.on("HERO_EXITS", this, () => {
-      events.emit("CHANGE_LEVEL", new OutdoorLevel1({
-        heroPosition: new Vector2(gridCells(16), gridCells(4)),
-        globalHeroState: this.globalHeroState
-      }))
-    })
   }
 
 }

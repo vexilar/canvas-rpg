@@ -24,8 +24,8 @@ export class BattleScene extends Level {
   constructor(params={}) {
     super({});
     
-    // Store global hero state for persistence
-    this.globalHeroState = params.globalHeroState;
+    // Store enemy key for tracking defeated enemies
+    this.enemyKey = params.enemyKey;
     
     // Battle background - using a simple background for now
     this.background = new Sprite({
@@ -33,49 +33,22 @@ export class BattleScene extends Level {
       frameSize: new Vector2(DESIGN_WIDTH, DESIGN_HEIGHT)
     })
 
-    // Position hero all the way to the left side of the screen, facing right
-    const heroBattlePosition = getGridPos(.1, .5);
-    // Provide a skills loadout to the hero for battle actions
+    // Store battle position for hero
+    this.heroBattlePosition = getGridPos(.1, .5);
+    
+    // Provide a skills loadout for the hero in battle
     const randomNames = [
       "Whirlwind", "Dragon Lunge", "Starfall", "Arc Slice",
       "Meteor Jab", "Gale Thrust", "Echo Cut", "Rune Break"
     ];
     const pick = () => randomNames[Math.floor(Math.random() * randomNames.length)];
-    const skillsLoadout = {
+    this.skillsLoadout = {
       top:    { key: "W", name: "Krakatoa" },
       right:  { key: "D", name: pick() },
       bottom: { key: "X", name: "Starfall" },
       left:   { key: "A", name: pick() },
     };
-    const hero = new Hero(heroBattlePosition.x, heroBattlePosition.y, { skills: skillsLoadout });
-    
-    // Restore hero experience/level from global state if available
-    if (this.globalHeroState) {
-      hero.level = this.globalHeroState.level || 1;
-      hero.experience = this.globalHeroState.experience || 0;
-      hero.experienceToNextLevel = this.globalHeroState.experienceToNextLevel || 1000;
-      // Update experience bar
-      if (hero.experienceBar) {
-        hero.experienceBar.setExperience(hero.experience, hero.experienceToNextLevel);
-      }
-    }
-    
-    this.addChild(hero);
-    this.hero = hero;
-    console.log("Battle hero created with health:", this.hero.health, "/", this.hero.maxHealth);
 
-    // Hide experience bar during battle (will show only when enemy dies)
-    if (this.hero.experienceBar) {
-      this.hero.experienceBar.visible = false;
-    }
-
-    // Set hero to face right and disable movement
-    this.hero.facingDirection = "RIGHT";
-    this.hero.body.animations.play("standRight");
-    this.hero.isLocked = true; // Disable movement in battle
-    
-    // Set heroStartPosition to hero's actual position (for attack animations)
-    this.heroStartPosition = heroBattlePosition;
 
     // Position baddy on the right side of the screen (but not too far right)
     const baddyBattlePosition = getGridPos(.825, .43);
@@ -92,8 +65,8 @@ export class BattleScene extends Level {
     console.log("Battle baddy created with health:", this.baddy.health, "/", this.baddy.maxHealth, "attack:", this.baddy.attackPower);
     
     // Calculate the center point between hero and baddy for camera positioning
-    const centerX = (heroBattlePosition.x + baddyBattlePosition.x) / 2;
-    const centerY = (heroBattlePosition.y + baddyBattlePosition.y) / 2;
+    const centerX = (this.heroBattlePosition.x + baddyBattlePosition.x) / 2;
+    const centerY = (this.heroBattlePosition.y + baddyBattlePosition.y) / 2;
     this.battleCameraCenter = new Vector2(centerX, centerY);
 
     // Store the original level to return to
@@ -127,14 +100,12 @@ export class BattleScene extends Level {
     // Initialize walls set (empty for battle scene - no walls to block movement)
     this.walls = new Set();
 
-    // Turn scheduler based on speed
-    this.heroInterval = this.hero && this.hero.speed ? (1000 / this.hero.speed) : Infinity;
+    // Turn scheduler based on speed (hero is set in ready(), default to 100 speed)
+    this.heroInterval = 1000 / 100; // Default hero speed is 100
     this.baddyInterval = this.baddy && this.baddy.speed ? (1000 / this.baddy.speed) : Infinity;
     this.heroNextAt = 0;
     this.baddyNextAt = 0;
     this.turnQueue = [];
-    this.ensureTurnQueue(5);
-    this.currentTurn = this.turnQueue[0];
     this.turnOrderHUD = null;
 
     // Skill selection state/UI
@@ -144,6 +115,50 @@ export class BattleScene extends Level {
   }
 
   ready() {
+    // Hero is provided by Main - configure it for battle
+    if (this.hero) {
+      console.log("BattleScene: Configuring hero for battle");
+      
+      // Always remove first in case it's somehow already there
+      const heroIndex = this.children.indexOf(this.hero);
+      if (heroIndex !== -1) {
+        this.children.splice(heroIndex, 1);
+      }
+      
+      // Move hero to battle position
+      this.hero.position.x = this.heroBattlePosition.x;
+      this.hero.position.y = this.heroBattlePosition.y;
+      this.hero.destinationPosition.x = this.heroBattlePosition.x;
+      this.hero.destinationPosition.y = this.heroBattlePosition.y;
+      
+      // Add hero to battle scene
+      this.addChild(this.hero);
+      
+      // Apply battle-specific settings
+      this.hero.skills = this.skillsLoadout;
+      this.hero.facingDirection = "RIGHT";
+      this.hero.body.animations.play("standRight");
+      this.hero.isLocked = true;
+      
+      // Hide experience bar during battle (will show only when enemy dies)
+      if (this.hero.experienceBar) {
+        this.hero.experienceBar.visible = false;
+      }
+      
+      console.log("BattleScene: Hero added at", this.hero.position.x, this.hero.position.y, "Health:", this.hero.health, "/", this.hero.maxHealth);
+      console.log("BattleScene: Hero has", this.hero.children.length, "children (should include body, shadow, bars)");
+    }
+    
+    // Set heroStartPosition for attack animations
+    this.heroStartPosition = this.heroBattlePosition;
+    
+    // Update turn scheduler now that we have the hero
+    if (this.hero) {
+      this.heroInterval = this.hero.speed ? (1000 / this.hero.speed) : (1000 / 100);
+    }
+    this.ensureTurnQueue(5);
+    this.currentTurn = this.turnQueue[0];
+    
     // Disable camera follow immediately when battle scene loads
     // This prevents the camera from following hero movements during battle
     events.emit("CAMERA_FOLLOW_ENABLED", false);
@@ -215,6 +230,12 @@ export class BattleScene extends Level {
       this.hero.experienceBar.visible = false;
     }
 
+    // Re-enable hero movement
+    if (this.hero) {
+      this.hero.isLocked = false;
+      this.hero.skills = null; // Clear battle skills
+    }
+
     // Re-enable camera follow when leaving battle
     events.emit("CAMERA_FOLLOW_ENABLED", true);
     // Stop battle BGM with a short fade
@@ -225,37 +246,22 @@ export class BattleScene extends Level {
       this.turnOrderHUD = null;
     }
 
-    // Update global hero state with current hero stats
-    if (this.hero && this.globalHeroState) {
-      this.globalHeroState.level = this.hero.level;
-      this.globalHeroState.experience = this.hero.experience;
-      this.globalHeroState.experienceToNextLevel = this.hero.experienceToNextLevel;
+    // Mark enemy as defeated in enemy manager
+    if (this.enemyKey && this.enemyManager && !this.baddy.isAlive) {
+      this.enemyManager.markDefeated(this.enemyKey);
     }
 
-    // Prepare battle result data
-    const battleResult = {
-      baddyDefeated: !this.baddy.isAlive,
-      baddyPosition: this.baddy ? this.baddy.position.duplicate() : null,
-      heroExperience: this.hero ? {
-        level: this.hero.level,
-        experience: this.hero.experience,
-        experienceToNextLevel: this.hero.experienceToNextLevel
-      } : null
-    };
-
-    // Return to the original level with battle result data
+    // Return to the original level
     if (this.originalLevel === "CaveLevel1") {
-      events.emit("CHANGE_LEVEL", new CaveLevel1({
-        heroPosition: new Vector2(gridCells(3), gridCells(6)),
-        battleResult: battleResult,
-        globalHeroState: this.globalHeroState
-      }));
+      events.emit("CHANGE_LEVEL", {
+        level: new CaveLevel1(),
+        heroPosition: new Vector2(gridCells(3), gridCells(6))
+      });
     } else if (this.originalLevel === "OutdoorLevel1") {
-      events.emit("CHANGE_LEVEL", new OutdoorLevel1({
-        heroPosition: new Vector2(gridCells(6), gridCells(5)),
-        battleResult: battleResult,
-        globalHeroState: this.globalHeroState
-      }));
+      events.emit("CHANGE_LEVEL", {
+        level: new OutdoorLevel1(),
+        heroPosition: new Vector2(gridCells(6), gridCells(5))
+      });
     }
   }
 

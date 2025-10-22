@@ -24,10 +24,13 @@ import {events} from "../../Events.js";
 import {audio} from "../../Audio.js";
 
 export class Hero extends GameObject {
-  constructor(x, y, options = {}) {
+  constructor(x, y, heroProgression, options = {}) {
     super({
       position: new Vector2(x, y)
     });
+
+    // Store reference to progression system
+    this.progression = heroProgression;
 
     // Turn order attribute
     this.speed = 100;
@@ -71,10 +74,11 @@ export class Hero extends GameObject {
     this.maxHealth = 100;
     this.isInvulnerable = false; // For damage cooldown
 
-    // Experience and leveling system
-    this.level = 1;
-    this.experience = 0;
-    this.experienceToNextLevel = 1000; // Experience needed for level 2
+    // Experience and leveling system - get from progression
+    this.level = heroProgression.level;
+    this.experience = heroProgression.experience;
+    this.experienceToNextLevel = heroProgression.experienceToNextLevel;
+    
     this.invulnerabilityTime = 0; // Time remaining invulnerable
     this.isKnockbacked = false; // For knockback state
     this.knockbackTime = 0; // Time remaining in knockback
@@ -91,6 +95,8 @@ export class Hero extends GameObject {
     const experienceBar = new ExperienceBar(100, 10, -15);
     this.addChild(experienceBar);
     this.experienceBar = experienceBar;
+    // Update experience bar with current progression values
+    experienceBar.setExperience(this.experience, this.experienceToNextLevel);
 
     this.facingDirection = DOWN;
     this.destinationPosition = this.position.duplicate();
@@ -299,37 +305,18 @@ export class Hero extends GameObject {
   }
 
   gainExperience(amount) {
-    this.experience += amount;
-    console.log(`Hero gained ${amount} experience! Total: ${this.experience}`);
+    // Delegate to progression system
+    const newLevel = this.progression.addExperience(amount);
+    
+    // Sync local state from progression
+    this.level = this.progression.level;
+    this.experience = this.progression.experience;
+    this.experienceToNextLevel = this.progression.experienceToNextLevel;
 
-    // Check for level up
-    while (this.experience >= this.experienceToNextLevel) {
-      this.levelUp();
-    }
-
-    // Update experience bar only once after all level ups are complete
+    // Update experience bar
     if (this.experienceBar) {
       this.experienceBar.setExperience(this.experience, this.experienceToNextLevel);
     }
-
-    // Emit event for UI updates
-    events.emit("HERO_EXPERIENCE_CHANGED", {
-      experience: this.experience,
-      experienceToNextLevel: this.experienceToNextLevel,
-      level: this.level
-    });
-  }
-
-  levelUp() {
-    const excessExperience = this.experience - this.experienceToNextLevel;
-    this.experience = excessExperience;
-    this.level += 1;
-
-    // Increase experience needed for next level (simple scaling)
-    this.experienceToNextLevel = Math.floor(this.experienceToNextLevel * 1.5);
-
-    console.log(`Hero leveled up to level ${this.level}!`);
-    events.emit("HERO_LEVEL_UP", { level: this.level });
   }
 
   takeDamage(amount, attackerPosition = null, returnToPosition = null) {
